@@ -1,0 +1,19 @@
+# Python cache, testing, and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# PyInstaller output (recreated by build commands)
+build/
+dist/
+*.spec
+
+# Converter output and local photo folders in this workspace
+**/heic-png/
+heic-png-report.txt
+
+# Local executable copied for ad-hoc use
+/*.exe
