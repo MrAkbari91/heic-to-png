@@ -8,14 +8,14 @@ from __future__ import annotations
 
 __author__ = "Dhruv Akbari"
 __email__ = "dhruvakbari303@gmail.com"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import argparse
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TextIO
+from typing import Callable, TextIO\n\nProgressCallback = Callable[[int, int, Path, str], None]
 
 try:
     from PIL import Image, ImageOps
@@ -123,7 +123,7 @@ def convert_folder(
             log(f"OK: {relative_source}")
         except Exception as error:
             summary.failed += 1
-            log(f"FAILED: {relative_source} -- {error}")
+            log(f"FAILED: {relative_source} -- {error}")\n            if progress is not None:\n                progress(index, total, relative_source, "failed")
 
     log(
         "\nDone. "
@@ -146,7 +146,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace existing PNG files.")
     parser.add_argument("--no-report", action="store_true", help="Do not create a report file.")
-    parser.add_argument("--pause", action="store_true", help="Wait for Enter before closing.")
+    parser.add_argument("--pause", action="store_true", help="Wait for Enter before closing.")\n    parser.add_argument("--quiet", action="store_true", help="Suppress conversion output and terminal progress.")\n    parser.add_argument("--no-progress", action="store_true", help="Disable per-file progress output.")
     return parser.parse_args()
 
 
