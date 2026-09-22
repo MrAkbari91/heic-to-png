@@ -58,7 +58,7 @@ python convert_heic_to_png.py
 python convert_heic_to_png.py --root "/path/to/photos"
 
 # Replace PNGs that already exist
-python convert_heic_to_png.py --root "/path/to/photos" --overwrite
+python convert_heic_to_png.py --root "/path/to/photos" --overwrite\n\n# Run quietly\npython convert_heic_to_png.py --root "/path/to/photos" --quiet\n\n# Keep normal logs but disable per-file progress\npython convert_heic_to_png.py --root "/path/to/photos" --no-progress
 ```
 
 On Windows, `run_converter.bat` is a shortcut for running the source code.
