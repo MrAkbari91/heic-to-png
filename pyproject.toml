@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heic-to-png"
-version = "1.0.0"
+version = "1.1.0"
 description = "Recursively convert HEIC/HEIF images to PNG beside their source folders."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,21 +1,125 @@
 from pathlib import Path
 
-from convert_heic_to_png import find_heic_files
+from convert_heic_to_png import convert_folder, find_heic_files
 
 
 def test_find_heic_files_is_recursive_and_ignores_output_folders(tmp_path: Path) -> None:
-    (tmp_path / "Camera").mkdir()
-    (tmp_path / "Camera" / "photo.HEIC").write_bytes(b"test")
-    (tmp_path / "dem" / "siblings").mkdir(parents=True)
-    (tmp_path / "dem" / "siblings" / "photo.heif").write_bytes(b"test")
-    (tmp_path / "Camera" / "heic-png").mkdir()
-    (tmp_path / "Camera" / "heic-png" / "old.heic").write_bytes(b"ignore")
+    (tmp_path / "folder_a").mkdir()
+    (tmp_path / "folder_a" / "photo.HEIC").write_bytes(b"test")
+    (tmp_path / "folder_b" / "subfolder").mkdir(parents=True)
+    (tmp_path / "folder_b" / "subfolder" / "photo.heif").write_bytes(b"test")
+    (tmp_path / "folder_a" / "heic-png").mkdir()
+    (tmp_path / "folder_a" / "heic-png" / "old.heic").write_bytes(b"ignore")
 
     found, folder_count = find_heic_files(tmp_path, "heic-png", lambda _error: None)
 
     assert folder_count == 4
     assert {file.relative_to(tmp_path).as_posix() for file in found} == {
-        "Camera/photo.HEIC",
-        "dem/siblings/photo.heif",
+        "folder_a/photo.HEIC",
+        "folder_b/subfolder/photo.heif",
     }
-\n\ndef test_convert_folder_reports_progress_and_summary(tmp_path: Path, monkeypatch) -> None:\n    source_a = tmp_path / "photo-a.heic"\n    source_b = tmp_path / "photo-b.heif"\n    source_a.write_bytes(b"test")\n    source_b.write_bytes(b"test")\n\n    def fake_convert(source: Path, target: Path) -> None:\n        target.parent.mkdir(parents=True, exist_ok=True)\n        target.write_bytes(source.read_bytes())\n\n    monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert)\n    progress: list[tuple[int, int, str, str]] = []\n    summary = convert_folder(\n        tmp_path,\n        progress=lambda index, total, source, status: progress.append(\n            (index, total, source.as_posix(), status)\n        ),\n    )\n\n    assert summary.found == 2\n    assert summary.converted == 2\n    assert summary.skipped == 0\n    assert summary.failed == 0\n    assert [item[0] for item in progress] == [1, 2]\n    assert [item[1] for item in progress] == [2, 2]\n    assert [item[3] for item in progress] == ["converted", "converted"]\n\n\ndef test_convert_folder_reports_skipped_files(tmp_path: Path, monkeypatch) -> None:\n    source = tmp_path / "photo.heic"\n    source.write_bytes(b"test")\n    target = tmp_path / "heic-png" / "photo.png"\n    target.parent.mkdir()\n    target.write_bytes(b"existing")\n\n    called = False\n\n    def fake_convert(_source: Path, _target: Path) -> None:\n        nonlocal called\n        called = True\n\n    monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert)\n    progress: list[str] = []\n    summary = convert_folder(\n        tmp_path,\n        progress=lambda _index, _total, _source, status: progress.append(status),\n    )\n\n    assert summary.found == 1\n    assert summary.converted == 0\n    assert summary.skipped == 1\n    assert summary.failed == 0\n    assert progress == ["skipped"]\n    assert called is False
+
+
+def test_convert_folder_reports_progress_and_summary(tmp_path: Path, monkeypatch) -> None:
+    source_a = tmp_path / "photo-a.heic"
+    source_b = tmp_path / "photo-b.heif"
+    source_a.write_bytes(b"test")
+    source_b.write_bytes(b"test")
+
+    def fake_convert(source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+
+    monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert)
+    progress: list[tuple[int, int, str, str]] = []
+    summary = convert_folder(
+        tmp_path,
+        progress=lambda index, total, source, status: progress.append(
+            (index, total, source.as_posix(), status)
+        ),
+    )
+
+    assert summary.found == 2
+    assert summary.converted == 2
+    assert summary.skipped == 0
+    assert summary.failed == 0
+    assert [item[0] for item in progress] == [1, 2]
+    assert [item[1] for item in progress] == [2, 2]
+    assert [item[3] for item in progress] == ["converted", "converted"]
+
+
+def test_convert_folder_reports_skipped_files(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "photo.heic"
+    source.write_bytes(b"test")
+    target = tmp_path / "heic-png" / "photo.png"
+    target.parent.mkdir()
+    target.write_bytes(b"existing")
+
+    called = False
+
+    def fake_convert(_source: Path, _target: Path) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert)
+    progress: list[str] = []
+    summary = convert_folder(
+        tmp_path,
+        progress=lambda _index, _total, _source, status: progress.append(status),
+    )
+
+    assert summary.found == 1
+    assert summary.converted == 0
+    assert summary.skipped == 1
+    assert summary.failed == 0
+    assert progress == ["skipped"]
+    assert called is False
+
+
+def test_convert_folder_reports_failed_files(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "corrupt.heic"
+    source.write_bytes(b"bad data")
+
+    def fake_convert_fail(_source: Path, _target: Path) -> None:
+        raise ValueError("corrupt image data")
+
+    monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert_fail)
+    progress: list[tuple[int, int, str, str]] = []
+    summary = convert_folder(
+        tmp_path,
+        progress=lambda index, total, source, status: progress.append(
+            (index, total, source.as_posix(), status)
+        ),
+    )
+
+    assert summary.found == 1
+    assert summary.converted == 0
+    assert summary.skipped == 0
+    assert summary.failed == 1
+    assert progress == [(1, 1, "corrupt.heic", "failed")]
+
+
+def test_convert_folder_quiet_suppresses_stdout(tmp_path: Path, monkeypatch, capsys) -> None:
+    source = tmp_path / "photo.heic"
+    source.write_bytes(b"test")
+    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt: None)
+
+    summary = convert_folder(tmp_path, quiet=True)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert summary.converted == 1
+
+
+def test_convert_folder_without_progress_logs_default(tmp_path: Path, monkeypatch, capsys) -> None:
+    source = tmp_path / "photo.heic"
+    source.write_bytes(b"test")
+    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt: None)
+
+    summary = convert_folder(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "Scanning root folder:" in captured.out
+    assert "OK: photo.heic" in captured.out
+    assert "Done. Converted: 1; skipped: 0; failed: 0" in captured.out
+    assert summary.converted == 1

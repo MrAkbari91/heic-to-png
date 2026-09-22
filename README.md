@@ -48,6 +48,16 @@ python -m pip install -e .[dev,build]
 pytest
 ```
 
+## Features & v1.1.0 Updates
+
+v1.1.0 adds:
+- **CLI progress feedback**: Visual percentage and progress indicator per file (`[CURRENT/TOTAL] PERCENT% STATUS: path`).
+- **Conversion status per file**: Real-time status reporting (`CONVERTED`, `SKIPPED`, `FAILED`).
+- **`--quiet` option**: Suppresses normal informational/log output while processing files.
+- **`--no-progress` option**: Disables the per-file progress display while preserving standard conversion summaries.
+- **Improved conversion summary**: Clear reporting of converted, skipped, and failed counters.
+- **Progress callback support**: Python API support for attaching a custom `ProgressCallback` when calling `convert_folder()`.
+
 ## Run from source
 
 ```bash
@@ -55,10 +65,16 @@ pytest
 python convert_heic_to_png.py
 
 # Scan a different folder
-python convert_heic_to_png.py --root "/path/to/photos"
+python convert_heic_to_png.py --root "C:\path\to\images"
 
 # Replace PNGs that already exist
-python convert_heic_to_png.py --root "/path/to/photos" --overwrite\n\n# Run quietly\npython convert_heic_to_png.py --root "/path/to/photos" --quiet\n\n# Keep normal logs but disable per-file progress\npython convert_heic_to_png.py --root "/path/to/photos" --no-progress
+python convert_heic_to_png.py --root "C:\path\to\images" --overwrite
+
+# Run quietly (suppresses terminal output)
+python convert_heic_to_png.py --root "C:\path\to\images" --quiet
+
+# Keep normal logs but disable per-file progress
+python convert_heic_to_png.py --root "C:\path\to\images" --no-progress
 ```
 
 On Windows, `run_converter.bat` is a shortcut for running the source code.
@@ -68,7 +84,7 @@ On Windows, `run_converter.bat` is a shortcut for running the source code.
 PyInstaller builds for the operating system it runs on.
 
 ```bash
-pyinstaller --noconfirm --clean --onefile --name heic-to-png convert_heic_to_png.py
+pyinstaller --noconfirm --clean --onefile --name heic-to-png --icon=heic_to_any.ico convert_heic_to_png.py
 ```
 
 The result is in `dist/`. On Windows, double-click `build_exe.bat` instead.
@@ -88,6 +104,7 @@ page after a successful run.
 | `requirements.txt` | Runtime dependency list |
 | `.github/workflows/build.yml` | GitHub test and cross-platform build automation |
 | `build_exe.bat` | Windows local EXE build shortcut |
+| `CHANGELOG.md` | Version history and release notes |
 | `.gitignore` | Keeps local photos, PNG output, and build files out of Git |
 
 ## Git workflow

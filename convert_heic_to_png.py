@@ -15,7 +15,9 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TextIO\n\nProgressCallback = Callable[[int, int, Path, str], None]
+from typing import Callable, TextIO
+
+ProgressCallback = Callable[[int, int, Path, str], None]
 
 try:
     from PIL import Image, ImageOps
@@ -88,12 +90,15 @@ def convert_folder(
     output_folder_name: str = DEFAULT_OUTPUT_FOLDER,
     overwrite: bool = False,
     report: TextIO | None = None,
+    progress: ProgressCallback | None = None,
+    quiet: bool = False,
 ) -> ConversionSummary:
     """Convert all supported images below root and return a progress summary."""
     summary = ConversionSummary()
 
     def log(message: str) -> None:
-        print(message)
+        if not quiet:
+            print(message)
         if report is not None:
             report.write(message + "\n")
 
@@ -103,27 +108,43 @@ def convert_folder(
         walk_errors.append(f"WARNING: Could not open {error.filename}: {error}")
 
     files, summary.folders_scanned = find_heic_files(root, output_folder_name, on_walk_error)
-    summary.found = len(files)
+    total = len(files)
+    summary.found = total
     log(f"Scanning root folder: {root}")
     log(f"Folders scanned: {summary.folders_scanned}")
     log(f"HEIC/HEIF files found: {summary.found}")
     for error_message in walk_errors:
         log(error_message)
 
-    for source in files:
+    for index, source in enumerate(files, start=1):
         relative_source = source.relative_to(root)
         target = source.parent / output_folder_name / f"{source.stem}.png"
         if target.exists() and not overwrite:
             summary.skipped += 1
-            log(f"SKIPPED (PNG already exists): {relative_source}")
+            if report is not None:
+                report.write(f"SKIPPED (PNG already exists): {relative_source}\n")
+            if progress is not None:
+                progress(index, total, relative_source, "skipped")
+            elif not quiet:
+                print(f"SKIPPED (PNG already exists): {relative_source}")
             continue
         try:
             convert_one(source, target)
             summary.converted += 1
-            log(f"OK: {relative_source}")
+            if report is not None:
+                report.write(f"OK: {relative_source}\n")
+            if progress is not None:
+                progress(index, total, relative_source, "converted")
+            elif not quiet:
+                print(f"OK: {relative_source}")
         except Exception as error:
             summary.failed += 1
-            log(f"FAILED: {relative_source} -- {error}")\n            if progress is not None:\n                progress(index, total, relative_source, "failed")
+            if report is not None:
+                report.write(f"FAILED: {relative_source} -- {error}\n")
+            if progress is not None:
+                progress(index, total, relative_source, "failed")
+            elif not quiet:
+                print(f"FAILED: {relative_source} -- {error}")
 
     log(
         "\nDone. "
@@ -146,7 +167,9 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace existing PNG files.")
     parser.add_argument("--no-report", action="store_true", help="Do not create a report file.")
-    parser.add_argument("--pause", action="store_true", help="Wait for Enter before closing.")\n    parser.add_argument("--quiet", action="store_true", help="Suppress conversion output and terminal progress.")\n    parser.add_argument("--no-progress", action="store_true", help="Disable per-file progress output.")
+    parser.add_argument("--pause", action="store_true", help="Wait for Enter before closing.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress conversion output and terminal progress.")
+    parser.add_argument("--no-progress", action="store_true", help="Disable per-file progress output.")
     return parser.parse_args()
 
 
@@ -160,12 +183,37 @@ def main() -> int:
 
     register_heif_opener()
     report_path = root / DEFAULT_REPORT_FILE
+
+    progress_callback: ProgressCallback | None = None
+    if not arguments.quiet and not arguments.no_progress:
+        def cli_progress(index: int, total: int, source: Path, status: str) -> None:
+            percent = int((index / total) * 100) if total > 0 else 0
+            print(f"[{index}/{total}] {percent}% {status.upper()}: {source.as_posix()}")
+
+        progress_callback = cli_progress
+    elif arguments.no_progress and not arguments.quiet:
+        progress_callback = lambda _index, _total, _source, _status: None
+
     if arguments.no_report:
-        summary = convert_folder(root, arguments.output_folder, arguments.overwrite)
+        summary = convert_folder(
+            root,
+            output_folder_name=arguments.output_folder,
+            overwrite=arguments.overwrite,
+            progress=progress_callback,
+            quiet=arguments.quiet,
+        )
     else:
         with report_path.open("w", encoding="utf-8") as report:
-            summary = convert_folder(root, arguments.output_folder, arguments.overwrite, report)
-        print(f"Report saved: {report_path}")
+            summary = convert_folder(
+                root,
+                output_folder_name=arguments.output_folder,
+                overwrite=arguments.overwrite,
+                report=report,
+                progress=progress_callback,
+                quiet=arguments.quiet,
+            )
+        if not arguments.quiet:
+            print(f"Report saved: {report_path}")
 
     if arguments.pause or (getattr(sys, "frozen", False) and sys.platform == "win32"):
         input("\nPress Enter to close...")

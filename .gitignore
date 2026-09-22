@@ -14,6 +14,7 @@ dist/
 # Converter output and local photo folders in this workspace
 **/heic-png/
 heic-png-report.txt
+test_photos/
 
 # Local executable copied for ad-hoc use
 /*.exe
