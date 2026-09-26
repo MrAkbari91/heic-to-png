@@ -1,13 +1,12 @@
 @echo off
 cd /d "%~dp0"
-python -m pip install -r requirements.txt
+call setup_env.bat
 if errorlevel 1 goto :error
-python convert_heic_to_png.py
+".venv\Scripts\python.exe" convert_heic_to_png.py --cli %*
+set "converter_result=%errorlevel%"
 pause
-exit /b 0
-
+exit /b %converter_result%
 :error
-echo.
-echo Required packages could not be installed.
+echo Could not prepare Python or the HEIC decoder. Read the error above.
 pause
 exit /b 1

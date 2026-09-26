@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.1
+
+- Catch blocked HEIC decoder initialization in the GUI and display actionable error details.
+- Build and launch consistently from the project virtual environment; bundle decoder libraries.
+- Add BMP, TIFF/TIF and GIF output alongside PNG/JPG/JPEG/WebP.
+- Fix folder exclusions, colliding source names, and failure/success summaries.
+- Save outputs atomically; finish the current photo before cancelling or closing.
+- Validate output folder names, preserve palette alpha and supported ICC profiles.
+- Keep conversion running if the GUI cannot create its optional report.
+- Add real HEIC/HEIF and Tk GUI regression coverage.
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

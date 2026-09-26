@@ -7,8 +7,11 @@ on:
 
 jobs:
   test:
-    name: Test on Python 3.12
-    runs-on: ubuntu-latest
+    name: Test on Python 3.12 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,17 +33,17 @@ jobs:
             name: Windows
             artifact: heic-to-png-windows
             asset_name: heic-to-png-windows.exe
-            exe_name: heic-to-png.exe
+            exe_name: HEIC-to-PNG.exe
           - os: macos-latest
             name: macOS
             artifact: heic-to-png-macos
             asset_name: heic-to-png-macos
-            exe_name: heic-to-png
+            exe_name: HEIC-to-PNG
           - os: ubuntu-latest
             name: Linux
             artifact: heic-to-png-linux
             asset_name: heic-to-png-linux
-            exe_name: heic-to-png
+            exe_name: HEIC-to-PNG
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,7 +51,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e .[build]
-      - run: pyinstaller --noconfirm --clean --onefile --name heic-to-png convert_heic_to_png.py
+      - run: pyinstaller --noconfirm --clean HEIC-to-PNG.spec
       - name: Rename executable for release
         shell: bash
         run: |

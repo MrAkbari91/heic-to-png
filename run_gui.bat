@@ -1,12 +1,14 @@
 @echo off
 cd /d "%~dp0"
-python -m pip install -r requirements.txt
+call setup_env.bat
 if errorlevel 1 goto :error
-python -m gui
+".venv\Scripts\python.exe" gui.py
+if errorlevel 1 goto :error
 exit /b 0
-
 :error
 echo.
-echo Required packages could not be installed.
+echo Could not start the converter. Read the error above.
+echo Install Python 3.10 or newer with Tcl/Tk support if Python is missing.
+echo If Windows Application Control blocks a DLL, ask your administrator to approve it.
 pause
 exit /b 1

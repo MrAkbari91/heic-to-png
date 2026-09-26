@@ -1,12 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
 a = Analysis(
     ['convert_heic_to_png.py'],
     pathex=[],
-    binaries=[],
+    binaries=collect_dynamic_libs('pillow_heif'),
     datas=[('heic_to_any.ico', '.')],
-    hiddenimports=['gui'],
+    hiddenimports=['gui', '_pillow_heif'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

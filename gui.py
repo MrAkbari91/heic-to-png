@@ -1,7 +1,7 @@
 """Graphical User Interface for HEIC Converter.
 
 Allows users to select input directories, choose target image formats
-(PNG, JPG, JPEG, WEBP), monitor real-time conversion progress, and view logs.
+(PNG, JPG, WebP, BMP, TIFF, GIF), monitor conversion progress, and view logs.
 """
 
 from __future__ import annotations
@@ -14,13 +14,11 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable
-
-from pillow_heif import register_heif_opener
+from contextlib import ExitStack
 
 import convert_heic_to_png as converter
 
-SUPPORTED_FORMATS = ["PNG", "JPG", "JPEG", "WEBP"]
+SUPPORTED_FORMATS = [fmt.upper() for fmt in converter.SUPPORTED_FORMATS]
 
 
 def find_icon_path() -> Path | None:
@@ -63,8 +61,8 @@ class HEICConverterGUI:
     ) -> None:
         self.root = root_window
         self.root.title("HEIC to Any Image Converter")
-        self.root.geometry("640x660")
-        self.root.minsize(580, 540)
+        self.root.geometry("760x700")
+        self.root.minsize(700, 640)
 
         # Apply icon
         icon_path = find_icon_path()
@@ -76,8 +74,8 @@ class HEICConverterGUI:
 
         # State
         self.initial_dir = (
-            initial_root
-            if initial_root and initial_root.is_dir()
+            initial_root.expanduser().resolve()
+            if initial_root is not None
             else converter.application_root()
         )
         self.root_path_var = tk.StringVar(value=str(self.initial_dir))
@@ -88,6 +86,10 @@ class HEICConverterGUI:
 
         self.is_converting = False
         self.is_cancelled = False
+        self.close_requested = False
+        self.worker: threading.Thread | None = None
+        self.last_root_dir = self.initial_dir
+        self.setting_widgets = []
         self.last_output_dir: Path | None = None
 
         self.msg_queue: queue.Queue = queue.Queue()
@@ -130,7 +132,7 @@ class HEICConverterGUI:
 
         subtitle_lbl = ttk.Label(
             header_frame,
-            text="Convert HEIC / HEIF photos recursively into PNG, JPG, JPEG, or WEBP.",
+            text="Convert HEIC / HEIF photos into PNG, JPG, WEBP, BMP, TIFF or GIF.",
             style="SubHeader.TLabel",
         )
         subtitle_lbl.pack(anchor=tk.W, pady=(2, 0))
@@ -174,15 +176,12 @@ class HEICConverterGUI:
             format_row, text="Target Format:", font=("Segoe UI", 9, "bold")
         ).pack(side=tk.LEFT, padx=(0, 12))
 
-        for fmt in SUPPORTED_FORMATS:
-            rb = ttk.Radiobutton(
-                format_row,
-                text=fmt,
-                value=fmt,
-                variable=self.format_var,
-                command=self._on_format_changed,
-            )
-            rb.pack(side=tk.LEFT, padx=8)
+        self.format_combo = ttk.Combobox(
+            format_row, textvariable=self.format_var, values=SUPPORTED_FORMATS,
+            state="readonly", width=12,
+        )
+        self.format_combo.pack(side=tk.LEFT)
+        self.format_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_format_changed())
 
         # Output Folder Name Row
         folder_row = ttk.Frame(options_frame)
@@ -216,6 +215,8 @@ class HEICConverterGUI:
             check_row, text="Create summary report file", variable=self.save_report_var
         )
         self.report_check.pack(side=tk.LEFT)
+        self.setting_widgets = [self.folder_entry, browse_btn, self.output_folder_entry,
+                                self.overwrite_check, self.report_check]
 
         # --- Progress & Stats ---
         progress_frame = ttk.LabelFrame(
@@ -317,240 +318,176 @@ class HEICConverterGUI:
         self.log_text.insert(tk.END, text + "\n", tag)
         self.log_text.see(tk.END)
 
+    def _set_running(self, running: bool) -> None:
+        self.is_converting = running
+        for widget in self.setting_widgets:
+            widget.configure(state=tk.DISABLED if running else tk.NORMAL)
+        self.format_combo.configure(state=tk.DISABLED if running else "readonly")
+        self.start_btn.configure(state=tk.DISABLED if running else tk.NORMAL)
+        self.cancel_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
+
     def _start_conversion(self) -> None:
-        root_dir = Path(self.root_path_var.get().strip()).expanduser().resolve()
-        if not root_dir.is_dir():
-            messagebox.showerror(
-                "Invalid Folder",
-                f"Selected folder does not exist:\n{root_dir}",
-                parent=self.root,
+        if self.close_requested or self.is_converting or (self.worker and self.worker.is_alive()):
+            return
+        try:
+            text = self.root_path_var.get().strip().strip('"')
+            if not text:
+                raise ValueError("Please select a folder containing HEIC / HEIF photos.")
+            root_dir = Path(text).expanduser().resolve()
+            if not root_dir.is_dir():
+                raise ValueError(f"Selected folder does not exist: {root_dir}")
+            target_fmt = converter.normalize_format(self.format_var.get())
+            output_folder = converter.validate_output_folder(
+                self.output_folder_var.get().strip() or f"heic-{target_fmt}"
             )
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Invalid Settings", str(error), parent=self.root)
             return
 
-        target_fmt = self.format_var.get().lower()
-        output_folder = self.output_folder_var.get().strip() or f"heic-{target_fmt}"
-        overwrite = self.overwrite_var.get()
-        save_report = self.save_report_var.get()
-
-        self.is_converting = True
+        self.last_root_dir = root_dir
+        self.last_output_dir = None
         self.is_cancelled = False
-        self.start_btn.config(state=tk.DISABLED)
-        self.cancel_btn.config(state=tk.NORMAL)
+        self._set_running(True)
         self.open_btn.config(state=tk.DISABLED)
         self.progress_bar["value"] = 0
         self.log_text.delete("1.0", tk.END)
         self.status_label.config(text="Scanning for HEIC files...", foreground="#0066cc")
         self.count_label.config(text="Scanning...")
-
-        self._append_log(f"Selected folder: {root_dir}")
-        self._append_log(f"Target format: {target_fmt.upper()}")
-        self._append_log(f"Output folder: {output_folder}")
-        self._append_log("-" * 50)
-
-        # Run conversion in background worker thread
-        thread = threading.Thread(
+        self.worker = threading.Thread(
             target=self._run_conversion_worker,
-            args=(root_dir, target_fmt, output_folder, overwrite, save_report),
-            daemon=True,
+            args=(root_dir, target_fmt, output_folder,
+                  self.overwrite_var.get(), self.save_report_var.get()),
+            daemon=False,
         )
-        thread.start()
+        self.worker.start()
 
-    def _run_conversion_worker(
-        self,
-        root_dir: Path,
-        target_fmt: str,
-        output_folder: str,
-        overwrite: bool,
-        save_report: bool,
-    ) -> None:
-        register_heif_opener()
+    def _run_conversion_worker(self, root_dir: Path, target_fmt: str,
+                               output_folder: str, overwrite: bool, save_report: bool) -> None:
+        def log(text: str) -> None:
+            self.msg_queue.put({"type": "log", "text": text})
 
-        def progress_cb(index: int, total: int, source: Path, status: str) -> None:
-            self.msg_queue.put(
-                {
-                    "type": "progress",
-                    "index": index,
-                    "total": total,
-                    "source": str(source),
-                    "status": status,
-                }
-            )
+        def progress(index: int, total: int, source: Path, status: str) -> None:
+            self.msg_queue.put({"type": "progress", "index": index, "total": total,
+                                "source": str(source), "status": status})
 
-        def is_cancelled() -> bool:
-            return self.is_cancelled
-
-        report_file = (
-            (root_dir / f"heic-{target_fmt}-report.txt") if save_report else None
-        )
-
+        # Decoder initialization must be inside the try: a blocked DLL is recoverable UI state.
         try:
-            if report_file:
-                with report_file.open("w", encoding="utf-8") as rep:
-                    summary = converter.convert_folder(
-                        root=root_dir,
-                        output_folder_name=output_folder,
-                        overwrite=overwrite,
-                        report=rep,
-                        progress=progress_cb,
-                        quiet=True,
-                        target_format=target_fmt,
-                        cancel_check=is_cancelled,
-                    )
-            else:
+            converter.initialize_heif()
+            report_path = None
+            report_warning = None
+            with ExitStack() as stack:
+                report = None
+                if save_report:
+                    candidate = root_dir / f"heic-{target_fmt}-report.txt"
+                    try:
+                        report = stack.enter_context(candidate.open("w", encoding="utf-8"))
+                        report_path = candidate
+                    except OSError as error:
+                        report_warning = f"Could not create report: {error}. Conversion will continue."
+                        log("WARNING: " + report_warning)
                 summary = converter.convert_folder(
-                    root=root_dir,
-                    output_folder_name=output_folder,
-                    overwrite=overwrite,
-                    progress=progress_cb,
-                    quiet=True,
-                    target_format=target_fmt,
-                    cancel_check=is_cancelled,
+                    root_dir, output_folder_name=output_folder, overwrite=overwrite,
+                    report=report, progress=progress, quiet=True, target_format=target_fmt,
+                    cancel_check=lambda: self.is_cancelled, on_log=log,
                 )
-
-            self.msg_queue.put(
-                {
-                    "type": "complete",
-                    "summary": summary,
-                    "report_file": str(report_file) if report_file else None,
-                    "output_dir": str(root_dir / output_folder),
-                    "cancelled": self.is_cancelled,
-                }
-            )
-        except Exception as exc:
-            self.msg_queue.put({"type": "error", "error": str(exc)})
+                if report_warning:
+                    summary.warnings.append(report_warning)
+            output_dir = root_dir / output_folder
+            self.msg_queue.put({"type": "complete", "summary": summary,
+                                "report_file": str(report_path) if report_path else None,
+                                "output_dir": str(output_dir if output_dir.is_dir() else root_dir),
+                                "cancelled": summary.cancelled})
+        except Exception as error:
+            self.msg_queue.put({"type": "error", "error": converter.error_message(error)})
 
     def _cancel_conversion(self) -> None:
         if self.is_converting:
             self.is_cancelled = True
-            self.status_label.config(
-                text="Cancelling... finishing current file", foreground="#cc6600"
-            )
+            self.status_label.config(text="Cancelling... finishing current file", foreground="#cc6600")
             self.cancel_btn.config(state=tk.DISABLED)
 
     def _process_queue(self) -> None:
-        """Poll the thread-safe message queue and update GUI widgets."""
+        if self.close_requested and (self.worker is None or not self.worker.is_alive()):
+            self.root.destroy()
+            return
         try:
-            while True:
+            # Bound each batch so Cancel and window events stay responsive for large folders.
+            for _ in range(100):
                 msg = self.msg_queue.get_nowait()
-                msg_type = msg.get("type")
-
-                if msg_type == "progress":
-                    index = msg["index"]
-                    total = msg["total"]
-                    status = msg["status"]
-                    source = msg["source"]
-
-                    percent = int((index / total) * 100) if total > 0 else 0
+                kind = msg.get("type")
+                if kind == "log":
+                    text = msg["text"]
+                    tag = "failed" if text.startswith(("FAILED", "WARNING")) else "info"
+                    self._append_log(text, tag)
+                elif kind == "progress":
+                    index, total = msg["index"], msg["total"]
+                    percent = int(index / total * 100) if total else 0
                     self.progress_bar["value"] = percent
                     self.count_label.config(text=f"{index} / {total} ({percent}%)")
-
-                    status_tag = status.lower()
-                    status_text = f"[{status.upper()}] {source}"
-                    self._append_log(status_text, tag=status_tag)
-                    self.status_label.config(
-                        text=f"Converting... ({status.upper()})", foreground="#0066cc"
-                    )
-
-                elif msg_type == "complete":
+                    if not self.is_cancelled:
+                        self.status_label.config(text=f"Converting... {msg['source']}", foreground="#0066cc")
+                elif kind == "complete":
                     self._handle_completion(msg)
-
-                elif msg_type == "error":
-                    self.is_converting = False
-                    self.start_btn.config(state=tk.NORMAL)
-                    self.cancel_btn.config(state=tk.DISABLED)
-                    self.status_label.config(
-                        text="Error during conversion!", foreground="#cc0000"
-                    )
-                    self._append_log(f"ERROR: {msg['error']}", tag="failed")
-                    messagebox.showerror(
-                        "Conversion Error",
-                        f"An error occurred:\n{msg['error']}",
-                        parent=self.root,
-                    )
-
+                elif kind == "error":
+                    self._set_running(False)
+                    self.status_label.config(text="Conversion could not finish", foreground="#cc0000")
+                    self._append_log(f"ERROR: {msg['error']}", "failed")
+                    if not self.close_requested:
+                        messagebox.showerror("Conversion Error", msg["error"], parent=self.root)
         except queue.Empty:
             pass
-
         self.root.after(100, self._process_queue)
 
     def _handle_completion(self, msg: dict) -> None:
-        self.is_converting = False
+        self._set_running(False)
         summary = msg["summary"]
-        report_file = msg.get("report_file")
         self.last_output_dir = Path(msg["output_dir"])
-
-        self.start_btn.config(state=tk.NORMAL)
-        self.cancel_btn.config(state=tk.DISABLED)
         self.open_btn.config(state=tk.NORMAL)
-
-        if msg.get("cancelled"):
-            self.status_label.config(
-                text="Conversion cancelled by user", foreground="#cc6600"
-            )
-            self._append_log("-" * 50)
-            self._append_log(
-                f"Cancelled. Converted: {summary.converted}, Skipped: {summary.skipped}, Failed: {summary.failed}"
-            )
-            messagebox.showwarning(
-                "Cancelled",
-                f"Conversion cancelled by user.\n\n"
-                f"Converted: {summary.converted}\n"
-                f"Skipped: {summary.skipped}\n"
-                f"Failed: {summary.failed}",
-                parent=self.root,
-            )
+        processed = summary.converted + summary.skipped + summary.failed
+        percent = int(processed / summary.found * 100) if summary.found else 0
+        self.progress_bar["value"] = percent
+        self.count_label.config(text=f"{processed} / {summary.found} ({percent}%)")
+        if summary.cancelled:
+            title, color, dialog = "Conversion cancelled", "#cc6600", messagebox.showwarning
+        elif summary.failed or summary.warnings:
+            title, color, dialog = "Finished with errors or warnings", "#cc6600", messagebox.showwarning
+        elif not summary.found:
+            title, color, dialog = "No HEIC / HEIF photos found", "#cc6600", messagebox.showinfo
         else:
-            self.progress_bar["value"] = 100
-            self.status_label.config(
-                text="Conversion completed successfully!", foreground="#008800"
-            )
-            self._append_log("-" * 50)
-            self._append_log(
-                f"Done! Converted: {summary.converted}, Skipped: {summary.skipped}, Failed: {summary.failed}",
-                tag="converted",
-            )
-            if report_file:
-                self._append_log(f"Report saved: {report_file}")
-
-            msg_box_text = (
-                f"Conversion Complete!\n\n"
-                f"Total HEIC files: {summary.found}\n"
-                f"Converted: {summary.converted}\n"
-                f"Skipped: {summary.skipped}\n"
-                f"Failed: {summary.failed}"
-            )
-            if report_file:
-                msg_box_text += f"\n\nReport saved:\n{report_file}"
-
-            messagebox.showinfo("Finished", msg_box_text, parent=self.root)
+            title, color, dialog = "Conversion completed successfully!", "#008800", messagebox.showinfo
+        self.status_label.config(text=title, foreground=color)
+        details = (f"{title}\n\nFound: {summary.found}\nConverted: {summary.converted}"
+                   f"\nSkipped: {summary.skipped}\nFailed: {summary.failed}")
+        if summary.errors:
+            details += "\n\nFirst error:\n" + summary.errors[0]
+        if summary.warnings:
+            details += "\n\nWarning:\n" + summary.warnings[0]
+        if msg.get("report_file"):
+            details += "\n\nReport: " + msg["report_file"]
+        self._append_log(title)
+        if not self.close_requested:
+            dialog("Conversion Result", details, parent=self.root)
 
     def _open_output_folder(self) -> None:
-        if self.last_output_dir and self.last_output_dir.is_dir():
-            open_in_file_manager(self.last_output_dir)
-        else:
-            root_dir = Path(self.root_path_var.get())
-            if root_dir.is_dir():
-                open_in_file_manager(root_dir)
+        folder = self.last_output_dir or self.last_root_dir
+        open_in_file_manager(folder)
 
     def _on_close(self) -> None:
-        if self.is_converting:
-            if messagebox.askyesno(
-                "Quit",
-                "A conversion is currently in progress. Do you really want to quit?",
-                parent=self.root,
-            ):
-                self.is_cancelled = True
-                self.root.destroy()
+        if self.close_requested:
+            return
+        if self.worker and self.worker.is_alive():
+            if not messagebox.askyesno("Quit", "Stop after the current photo and close?", parent=self.root):
+                return
+            self.close_requested = True
+            self._cancel_conversion()
+            self.status_label.config(text="Closing after the current file is saved...", foreground="#cc6600")
         else:
             self.root.destroy()
 
 
 def launch_gui(initial_root: Path | None = None, initial_format: str = "png") -> int:
-    """Initialize and run the HEIC Converter Tkinter window."""
     root = tk.Tk()
-    app = HEICConverterGUI(
-        root, initial_root=initial_root, initial_format=initial_format
-    )
+    HEICConverterGUI(root, initial_root=initial_root, initial_format=initial_format)
     root.mainloop()
     return 0
 

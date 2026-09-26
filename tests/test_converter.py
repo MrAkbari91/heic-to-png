@@ -26,7 +26,7 @@ def test_convert_folder_reports_progress_and_summary(tmp_path: Path, monkeypatch
     source_a.write_bytes(b"test")
     source_b.write_bytes(b"test")
 
-    def fake_convert(source: Path, target: Path) -> None:
+    def fake_convert(source: Path, target: Path, target_format: str = "png") -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
 
@@ -57,7 +57,7 @@ def test_convert_folder_reports_skipped_files(tmp_path: Path, monkeypatch) -> No
 
     called = False
 
-    def fake_convert(_source: Path, _target: Path) -> None:
+    def fake_convert(_source: Path, _target: Path, target_format: str = "png") -> None:
         nonlocal called
         called = True
 
@@ -80,7 +80,7 @@ def test_convert_folder_reports_failed_files(tmp_path: Path, monkeypatch) -> Non
     source = tmp_path / "corrupt.heic"
     source.write_bytes(b"bad data")
 
-    def fake_convert_fail(_source: Path, _target: Path) -> None:
+    def fake_convert_fail(_source: Path, _target: Path, target_format: str = "png") -> None:
         raise ValueError("corrupt image data")
 
     monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert_fail)
@@ -102,7 +102,7 @@ def test_convert_folder_reports_failed_files(tmp_path: Path, monkeypatch) -> Non
 def test_convert_folder_quiet_suppresses_stdout(tmp_path: Path, monkeypatch, capsys) -> None:
     source = tmp_path / "photo.heic"
     source.write_bytes(b"test")
-    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt: None)
+    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt, **kwargs: None)
 
     summary = convert_folder(tmp_path, quiet=True)
 
@@ -114,7 +114,7 @@ def test_convert_folder_quiet_suppresses_stdout(tmp_path: Path, monkeypatch, cap
 def test_convert_folder_without_progress_logs_default(tmp_path: Path, monkeypatch, capsys) -> None:
     source = tmp_path / "photo.heic"
     source.write_bytes(b"test")
-    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt: None)
+    monkeypatch.setattr("convert_heic_to_png.convert_one", lambda src, tgt, **kwargs: None)
 
     summary = convert_folder(tmp_path)
 
