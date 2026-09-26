@@ -48,64 +48,75 @@ python -m pip install -e .[dev,build]
 pytest
 ```
 
-## Features & v1.1.0 Updates
+## Features & v1.2.0 Updates
 
-v1.1.0 adds:
-- **CLI progress feedback**: Visual percentage and progress indicator per file (`[CURRENT/TOTAL] PERCENT% STATUS: path`).
-- **Conversion status per file**: Real-time status reporting (`CONVERTED`, `SKIPPED`, `FAILED`).
-- **`--quiet` option**: Suppresses normal informational/log output while processing files.
-- **`--no-progress` option**: Disables the per-file progress display while preserving standard conversion summaries.
-- **Improved conversion summary**: Clear reporting of converted, skipped, and failed counters.
-- **Progress callback support**: Python API support for attaching a custom `ProgressCallback` when calling `convert_folder()`.
+v1.2.0 adds:
+- **Desktop Graphical User Interface (GUI)**: Modern Tkinter interface (`gui.py` / `run_gui.bat`) with folder selection, format choice, live progress bar, file logs, and completion dialogs.
+- **Multiple Output Formats**: Convert HEIC/HEIF files to **PNG**, **JPG**, **JPEG**, or **WEBP**.
+- **Per-Format Output Folders**: Automatically saves results into dedicated folders (e.g., `heic-png`, `heic-jpg`, `heic-webp`) without touching original images.
+- **Custom Application Icon**: Bundled `heic_to_any.ico` icon applied to the Windows executable and GUI titlebar.
+- **CLI Progress & Controls**: Visual progress indicator, `--quiet`, `--no-progress`, and `--format` options.
+- **Threaded Conversion**: Non-blocking background worker thread with cancellation support.
+- **Smart Color & Transparency Handling**: Safely composites RGBA transparency over white background for JPEG targets.
 
-## Run from source
+## Launch GUI (Graphical Interface)
+
+- **Windows**: Double-click `run_gui.bat` or the packaged `dist/HEIC-to-PNG.exe`.
+- **Command line**: Run `python convert_heic_to_png.py --gui` or `python -m gui`.
+
+## Run from source (CLI)
 
 ```bash
-# Scan this project folder (the default)
+# Launch GUI by default (or pass --gui)
 python convert_heic_to_png.py
 
-# Scan a different folder
-python convert_heic_to_png.py --root "C:\path\to\images"
+# Convert to JPG instead of default PNG
+python convert_heic_to_png.py --format jpg --root "C:\path\to\images"
 
-# Replace PNGs that already exist
-python convert_heic_to_png.py --root "C:\path\to\images" --overwrite
+# Convert to WebP
+python convert_heic_to_png.py --format webp --root "C:\path\to\images"
+
+# Replace existing converted files
+python convert_heic_to_png.py --root "C:\path\to\images" --format png --overwrite
+
+# Force command-line execution without GUI
+python convert_heic_to_png.py --cli --format jpg
 
 # Run quietly (suppresses terminal output)
 python convert_heic_to_png.py --root "C:\path\to\images" --quiet
-
-# Keep normal logs but disable per-file progress
-python convert_heic_to_png.py --root "C:\path\to\images" --no-progress
 ```
 
-On Windows, `run_converter.bat` is a shortcut for running the source code.
+On Windows:
+- `run_gui.bat` launches the Graphical User Interface.
+- `run_converter.bat` runs the CLI converter.
 
 ## Build a local executable
 
-PyInstaller builds for the operating system it runs on.
+PyInstaller builds for the operating system it runs on with the custom icon:
 
 ```bash
-pyinstaller --noconfirm --clean --onefile --name heic-to-png --icon=heic_to_any.ico convert_heic_to_png.py
+pyinstaller --noconfirm --clean HEIC-to-PNG.spec
 ```
 
 The result is in `dist/`. On Windows, double-click `build_exe.bat` instead.
-
-To build all three platforms, push the repository to GitHub. The workflow in
-`.github/workflows/build.yml` runs tests and produces Windows, macOS, and
-Linux artifacts automatically. Download them from the repository's **Actions**
-page after a successful run.
 
 ## Project map
 
 | Path | Purpose |
 | --- | --- |
-| `convert_heic_to_png.py` | Application code and command-line interface |
-| `tests/` | Automated tests |
+| `convert_heic_to_png.py` | Main application engine and CLI entry point |
+| `gui.py` | Desktop GUI interface with multi-format picker and live progress |
+| `heic_to_any.ico` | Application icon for window titlebars and compiled executable |
+| `run_gui.bat` | Windows batch shortcut to launch the GUI |
+| `run_converter.bat` | Windows batch shortcut to run CLI conversion |
+| `build_exe.bat` | Windows executable build script (with icon & data bundling) |
+| `HEIC-to-PNG.spec` | PyInstaller build specification with icon & hidden imports |
+| `tests/` | Automated test suite (conversions, formats, GUI, CLI) |
 | `pyproject.toml` | Project metadata and development dependencies |
 | `requirements.txt` | Runtime dependency list |
 | `.github/workflows/build.yml` | GitHub test and cross-platform build automation |
-| `build_exe.bat` | Windows local EXE build shortcut |
 | `CHANGELOG.md` | Version history and release notes |
-| `.gitignore` | Keeps local photos, PNG output, and build files out of Git |
+| `.gitignore` | Keeps local photos, output folders, and build files out of Git |
 
 ## Git workflow
 

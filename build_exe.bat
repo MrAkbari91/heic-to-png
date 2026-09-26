@@ -2,10 +2,10 @@
 cd /d "%~dp0"
 
 REM Run this after changing convert_heic_to_png.py.
-REM It creates or replaces dist\HEIC-to-PNG.exe.
+REM It creates or replaces dist\HEIC-to-PNG.exe with custom icon and GUI support.
 python -m pip install --upgrade -r requirements.txt pyinstaller
 if errorlevel 1 goto :error
-python -m PyInstaller --noconfirm --clean --onefile --name HEIC-to-PNG convert_heic_to_png.py
+python -m PyInstaller --noconfirm --clean HEIC-to-PNG.spec
 if errorlevel 1 goto :error
 echo.
 echo New EXE created: dist\HEIC-to-PNG.exe
