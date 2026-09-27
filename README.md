@@ -1,131 +1,129 @@
-# HEIC to PNG
+# HEIC / HEIF Image Converter
 
-A cross-platform command-line tool that scans a folder tree for `.heic` and
-`.heif` images. Every folder that contains source images receives its own
-`heic-png` folder containing PNG conversions. Originals are never moved,
-changed, or deleted.
+Convert HEIC, HEIF and HIF photos with a guided desktop app or the command line.
+Supported outputs: **PNG, JPG/JPEG, WebP, BMP, TIFF/TIF, GIF, ICO, TGA and PPM**.
+Original photos stay unchanged. Each source folder gets its own output subfolder.
 
-## For users
+## Windows: open the app
 
-Download the build matching your operating system from GitHub Actions
-artifacts (or a GitHub Release when you publish one). Put the executable in
-the top-level photo folder and run it.
+Open **`dist/HEIC-Converter.exe`** (version 2.0.1), or double-click **`run_gui.bat`**
+to run the current source. Rebuild the executable after changing source code;
+older copies of the app do not update automatically.
 
-- **Windows:** run `heic-to-png.exe` by double-clicking it.
-- **macOS/Linux:** open Terminal in the photo folder, then run
-  `./heic-to-png`. On macOS, you may need `chmod +x heic-to-png` once.
+1. Click **Choose folder** or **Add files**. Subfolders are included automatically.
+2. Wait for the background scan. The app shows the number of photos and where
+   results will be saved. An empty or unreadable folder gets an explanation.
+3. Choose an output format, then click **Convert N photos to FORMAT** in the
+   fixed bottom bar. You can also press **Ctrl+Enter** when the scan is ready.
+4. Watch the live progress and results. Click **Open results** when finished.
+   If outputs are spread across folders, choose the folder from the results list.
 
-The app writes `heic-png-report.txt` in the scanned root. Run with
-`--no-report` to disable it.
+The middle content scrolls on smaller displays; progress, Convert and Cancel
+remain available at the bottom. Changing a selection or output subfolder starts
+another scan. Overlapping selections are deduplicated.
 
-## Developer setup
-
-Requires Python 3.10 or newer and Git.
-
-```bash
-git clone https://github.com/MrAkbari91/heic-to-png.git
-cd heic-to-png
-python -m venv .venv
-```
-
-Activate the environment:
-
-```powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-```
-
-```bash
-# macOS or Linux
-source .venv/bin/activate
-```
-
-Install dependencies and run tests:
-
-```bash
-python -m pip install --upgrade pip
-python -m pip install -e .[dev,build]
-pytest
-```
-
-## Features & v1.1.0 Updates
-
-v1.1.0 adds:
-- **CLI progress feedback**: Visual percentage and progress indicator per file (`[CURRENT/TOTAL] PERCENT% STATUS: path`).
-- **Conversion status per file**: Real-time status reporting (`CONVERTED`, `SKIPPED`, `FAILED`).
-- **`--quiet` option**: Suppresses normal informational/log output while processing files.
-- **`--no-progress` option**: Disables the per-file progress display while preserving standard conversion summaries.
-- **Improved conversion summary**: Clear reporting of converted, skipped, and failed counters.
-- **Progress callback support**: Python API support for attaching a custom `ProgressCallback` when calling `convert_folder()`.
+- Default output: `heic-<format>` beside each source photo, for example
+  `Photos/Holiday/heic-png/photo.png`. The subfolder setting accepts a folder
+  name, not an absolute destination path.
+- Existing outputs are skipped unless **Overwrite existing** is enabled.
+- **Parallel jobs** controls how many photos convert at once (default 4).
+  Use fewer jobs for large photos or limited memory.
+- **Cancel** stops scheduling new work and lets active photos finish saving.
+  Closing during conversion asks before stopping and waits for active saves.
+- Failed photos and scan warnings appear in **Activity & error details**.
+  A batch with failures or scan warnings is never labelled successful.
+- The GUI keeps logs in memory. Use **Save log** to export them when needed.
+- Same-stem inputs in a batch, such as `photo.heic` and `photo.heif`, receive
+  distinct output names. Saving uses a temporary file and an atomic replacement.
 
 ## Run from source
 
-```bash
-# Scan this project folder (the default)
-python convert_heic_to_png.py
+Install Python 3.10 or newer with Tcl/Tk support. The Windows launchers use the
+project `.venv` and install runtime dependencies only if their import check fails.
+The first setup needs internet access. Startup errors remain visible in the
+launcher console.
 
-# Scan a different folder
-python convert_heic_to_png.py --root "C:\path\to\images"
-
-# Replace PNGs that already exist
-python convert_heic_to_png.py --root "C:\path\to\images" --overwrite
-
-# Run quietly (suppresses terminal output)
-python convert_heic_to_png.py --root "C:\path\to\images" --quiet
-
-# Keep normal logs but disable per-file progress
-python convert_heic_to_png.py --root "C:\path\to\images" --no-progress
+```sh
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -e ".[dev,build]"
+python gui.py
 ```
 
-On Windows, `run_converter.bat` is a shortcut for running the source code.
+Linux requires Tk and a graphical display for the GUI. CLI conversion does not
+require a display. If Windows blocks a decoder DLL, the app shows the decoder
+error; use `run_gui.bat` with an approved Python environment or contact the PC
+administrator. The app does not change Windows security policies.
 
-## Build a local executable
+## Command line
 
-PyInstaller builds for the operating system it runs on.
+`run_converter.bat` starts CLI mode. Installed entry points are `heic-to-png`
+and `heic-to-png-gui`. Running the main script without arguments opens the GUI
+when a display is available. Explicit `--gui` and `--cli` are mutually exclusive.
 
-```bash
-pyinstaller --noconfirm --clean --onefile --name heic-to-png --icon=heic_to_any.ico convert_heic_to_png.py
+```sh
+python convert_heic_to_png.py --cli --root "path/to/photos" --format jpg --workers 4
+python convert_heic_to_png.py --cli --root "path/to/photos" --format webp --no-report
+python convert_heic_to_png.py --cli --root "path/to/photos" --output-folder converted
+python convert_heic_to_png.py --cli --root "path/to/photos" --format png --overwrite
+python convert_heic_to_png.py --gui --root "path/to/photos" --format png
 ```
 
-The result is in `dist/`. On Windows, double-click `build_exe.bat` instead.
-
-To build all three platforms, push the repository to GitHub. The workflow in
-`.github/workflows/build.yml` runs tests and produces Windows, macOS, and
-Linux artifacts automatically. Download them from the repository's **Actions**
-page after a successful run.
-
-## Project map
-
-| Path | Purpose |
+| Option | Behavior |
 | --- | --- |
-| `convert_heic_to_png.py` | Application code and command-line interface |
-| `tests/` | Automated tests |
-| `pyproject.toml` | Project metadata and development dependencies |
-| `requirements.txt` | Runtime dependency list |
-| `.github/workflows/build.yml` | GitHub test and cross-platform build automation |
-| `build_exe.bat` | Windows local EXE build shortcut |
-| `CHANGELOG.md` | Version history and release notes |
-| `.gitignore` | Keeps local photos, PNG output, and build files out of Git |
+| `--root PATH` | Recursively scan this folder; default is the script/executable folder |
+| `--format FORMAT`, `-f FORMAT` | Output format; default PNG |
+| `--output-folder NAME` | Subfolder created beside each source; default `heic-<format>` |
+| `--workers 1..16` | Parallel conversions; default 4 |
+| `--overwrite` | Replace existing output files |
+| `--no-report` | Disable the CLI report |
+| `--quiet` | Suppress normal terminal output |
+| `--no-progress` | Hide per-photo progress |
+| `--pause` | Wait for Enter before exiting |
 
-## Git workflow
+CLI reports are saved as `heic-<format>-report.txt` under the root. A report-open
+failure produces a warning while conversion continues. Invalid output settings
+are rejected before creating a report. Exit status is nonzero for failures,
+warnings or invalid arguments; Ctrl+C returns 130. An empty valid folder returns
+zero with a message explaining that no supported photos were found.
 
-```bash
-git checkout -b feature/my-change
-# edit code and tests
-pytest
-git add convert_heic_to_png.py tests README.md
-git commit -m "Add my change"
-git push -u origin feature/my-change
+## Image behavior
+
+- Converts the primary image of a HEIF container and applies camera orientation.
+- Preserves ICC color profiles for PNG/JPEG/WebP/TIFF when available.
+- Decodes to 8-bit RGB/RGBA; this is not an HDR archival converter.
+- JPEG/WebP use quality 95. JPEG, BMP and PPM flatten transparency onto white.
+- PNG, WebP and TIFF preserve alpha. GIF has a limited palette/transparency.
+- ICO fits the image within 256 x 256 without enlarging small images.
+- Videos and unsupported input formats are ignored during folder discovery.
+  Corrupt HEIF photos are reported individually without aborting the batch.
+- Metadata preservation varies by output format; retain originals as your archive.
+
+## Development and packaging
+
+```sh
+python -m pytest -q
+python -m PyInstaller --noconfirm --clean HEIC-to-PNG.spec
 ```
 
-Open a Pull Request on GitHub. GitHub Actions must pass before merging.
+`build_exe.bat` uses the same specification and produces
+`dist/HEIC-Converter.exe`. The executable includes CustomTkinter assets and the
+HEIF decoder libraries. Use Python or `run_converter.bat` for terminal output;
+the packaged desktop executable is a windowed app.
 
-## Author
+Tests exercise real HEIC/HEIF decoding in every output format, atomic saves,
+parallel collisions, cancellation, CLI subprocesses, responsive GUI discovery,
+stale scan results, failure recovery and action visibility at small window sizes
+and increased scaling. Headless Linux GUI tests use `xvfb-run -a python -m pytest`.
 
-- **Dhruv Akbari**
-  - GitHub: [@MrAkbari91](https://github.com/MrAkbari91)
-  - Email: [dhruvakbari303@gmail.com](mailto:dhruvakbari303@gmail.com)
+| Module | Responsibility |
+| --- | --- |
+| `convert_heic_to_png.py` | Discovery, target planning, image conversion and shared batch engine; compatible script entry point |
+| `cli.py` | Argument validation, mode selection, reports and exit codes |
+| `gui.py` | Desktop presentation, asynchronous scan lifecycle and queued UI updates |
+| `tests/` | Engine, CLI and GUI regression coverage |
+| `setup_env.bat` / `run_*.bat` | Windows environment and launchers |
+| `HEIC-to-PNG.spec` / `build_exe.bat` | Executable packaging |
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+Author: Dhruv Akbari. See LICENSE for license terms.

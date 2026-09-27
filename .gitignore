@@ -10,10 +10,11 @@ __pycache__/
 build/
 dist/
 *.spec
+!HEIC-to-PNG.spec
 
 # Converter output and local photo folders in this workspace
-**/heic-png/
-heic-png-report.txt
+**/heic-*/
+heic-*-report.txt
 test_photos/
 
 # Local executable copied for ad-hoc use

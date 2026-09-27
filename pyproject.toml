@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heic-to-png"
-version = "1.1.0"
-description = "Recursively convert HEIC/HEIF images to PNG beside their source folders."
+version = "2.0.1"
+description = "Recursively convert HEIC/HEIF images to PNG, JPG, WEBP, BMP, TIFF, GIF, ICO, TGA, PPM with parallel processing, CLI and modern GUI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Dhruv Akbari", email = "dhruvakbari303@gmail.com" }]
-dependencies = ["Pillow>=10.0.0", "pillow-heif>=0.18.0"]
+dependencies = ["Pillow>=10.0.0", "pillow-heif>=0.18.0", "customtkinter>=6.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/MrAkbari91/heic-to-png"
@@ -23,9 +23,10 @@ dev = ["pytest>=8.0.0"]
 
 [project.scripts]
 heic-to-png = "convert_heic_to_png:main"
+heic-to-png-gui = "convert_heic_to_png:gui_main"
 
 [tool.setuptools]
-py-modules = ["convert_heic_to_png"]
+py-modules = ["convert_heic_to_png", "gui", "cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

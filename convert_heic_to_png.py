@@ -1,223 +1,348 @@
-"""Find HEIC/HEIF images recursively and convert them to PNG files.
-
-Each source folder receives its own output directory (``heic-png`` by
-default). The original image is never moved, changed, or deleted.
-"""
-
+"""Convert HEIC/HEIF photos to common image formats without changing originals."""
 from __future__ import annotations
 
 __author__ = "Dhruv Akbari"
 __email__ = "dhruvakbari303@gmail.com"
-__version__ = "1.1.0"
+__version__ = "2.0.1"
 
-import argparse
 import os
 import sys
-from dataclasses import dataclass
+import tempfile
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, TextIO
+from typing import Callable, Iterable, TextIO
+
+from PIL import Image, ImageOps
 
 ProgressCallback = Callable[[int, int, Path, str], None]
-
-try:
-    from PIL import Image, ImageOps
-    from pillow_heif import register_heif_opener
-except ImportError as error:
-    raise SystemExit(
-        "Required packages are missing. Install them with: python -m pip install ."
-    ) from error
-
-
-HEIC_EXTENSIONS = {".heic", ".heif"}
+CancelCallback = Callable[[], bool]
+LogCallback = Callable[[str], None]
+HEIC_EXTENSIONS = {".heic", ".heif", ".hif"}
+SUPPORTED_FORMATS = ("png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif",
+                     "ico", "tga", "ppm")
+PILLOW_FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "webp": "WEBP",
+                  "bmp": "BMP", "tiff": "TIFF", "tif": "TIFF", "gif": "GIF",
+                  "ico": "ICO", "tga": "TGA", "ppm": "PPM"}
+DEFAULT_FORMAT = "png"
 DEFAULT_OUTPUT_FOLDER = "heic-png"
 DEFAULT_REPORT_FILE = "heic-png-report.txt"
 
 
 @dataclass
 class ConversionSummary:
-    """Counters returned after a complete folder scan."""
-
     folders_scanned: int = 0
     found: int = 0
     converted: int = 0
     skipped: int = 0
     failed: int = 0
+    cancelled: bool = False
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    output_dirs: list[Path] = field(default_factory=list)
 
 
-def application_root() -> Path:
-    """Return the folder containing this script or the packaged executable."""
-    executable_or_script = sys.executable if getattr(sys, "frozen", False) else __file__
-    return Path(executable_or_script).resolve().parent
+@dataclass
+class ScanResult:
+    files: list[Path] = field(default_factory=list)
+    folders_scanned: int = 0
+    warnings: list[str] = field(default_factory=list)
+    cancelled: bool = False
 
 
-def find_heic_files(
-    root: Path,
-    output_folder_name: str,
-    on_error: Callable[[OSError], None],
-) -> tuple[list[Path], int]:
-    """Find input files while excluding generated output folders."""
-    files: list[Path] = []
-    folders_scanned = 0
-    for directory, folder_names, file_names in os.walk(root, onerror=on_error):
-        # Editing this list tells os.walk not to enter old conversion results.
-        folder_names[:] = [
-            name for name in folder_names if name.casefold() != output_folder_name.casefold()
-        ]
-        folders_scanned += 1
-        current_folder = Path(directory)
-        files.extend(
-            current_folder / name
-            for name in file_names
-            if Path(name).suffix.casefold() in HEIC_EXTENSIONS
-        )
-    return files, folders_scanned
-
-
-def convert_one(source: Path, target: Path) -> None:
-    """Convert one image to PNG and apply its EXIF camera orientation."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(source) as image:
-        corrected_image = ImageOps.exif_transpose(image)
-        if corrected_image.mode not in {"RGB", "RGBA"}:
-            corrected_image = corrected_image.convert(
-                "RGBA" if "A" in corrected_image.getbands() else "RGB"
+def scan_sources(sources: Iterable[Path], output_folder_name: str,
+                 cancel_check: CancelCallback | None = None) -> ScanResult:
+    """Discover inputs once, deduplicating overlapping file/folder selections."""
+    output = validate_output_folder(output_folder_name)
+    result = ScanResult()
+    seen: set[Path] = set()
+    for item in sources:
+        if cancel_check and cancel_check():
+            break
+        source = Path(item).expanduser().resolve()
+        if source.is_dir():
+            files, count = find_heic_files(
+                source, output,
+                lambda error: result.warnings.append(f"Could not scan {error.filename}: {error}"),
+                cancel_check,
             )
-        corrected_image.save(target, "PNG")
+            result.folders_scanned += count
+        elif source.is_file() and source.suffix.casefold() in HEIC_EXTENSIONS:
+            files = [source]
+        else:
+            result.warnings.append(f"Source is missing or is not a HEIC/HEIF image: {source}")
+            files = []
+        for photo in files:
+            photo = photo.resolve()
+            if photo not in seen:
+                seen.add(photo)
+                result.files.append(photo)
+    result.files.sort(key=lambda path: str(path).casefold())
+    result.cancelled = bool(cancel_check and cancel_check())
+    return result
 
 
-def convert_folder(
-    root: Path,
-    output_folder_name: str = DEFAULT_OUTPUT_FOLDER,
-    overwrite: bool = False,
-    report: TextIO | None = None,
-    progress: ProgressCallback | None = None,
-    quiet: bool = False,
-) -> ConversionSummary:
-    """Convert all supported images below root and return a progress summary."""
-    summary = ConversionSummary()
+def plan_targets(files: list[Path], output: str, fmt: str) -> list[Path]:
+    """Reserve unique output names before starting any parallel writes."""
+    stems = Counter((str(p.parent).casefold(), p.stem.casefold()) for p in files)
+    used: set[str] = set()
+    targets = []
+    for source in files:
+        key = (str(source.parent).casefold(), source.stem.casefold())
+        name = source.name if stems[key] > 1 else source.stem
+        target = source.parent / output / f"{name}.{fmt}"
+        count = 2
+        while str(target).casefold() in used:
+            target = source.parent / output / f"{name}-{count}.{fmt}"
+            count += 1
+        used.add(str(target).casefold())
+        targets.append(target)
+    return targets
 
-    def log(message: str) -> None:
-        if not quiet:
-            print(message)
-        if report is not None:
-            report.write(message + "\n")
 
-    walk_errors: list[str] = []
+def convert_files(files: list[Path], output_folder_name: str | None = None,
+                  overwrite: bool = False, target_format: str = DEFAULT_FORMAT,
+                  workers: int = 1, progress: ProgressCallback | None = None,
+                  cancel_check: CancelCallback | None = None,
+                  on_log: LogCallback | None = None) -> ConversionSummary:
+    """Shared CLI/GUI batch engine. Callbacks run on the coordinating thread."""
+    fmt = normalize_format(target_format)
+    output = validate_output_folder(output_folder_name if output_folder_name is not None else f"heic-{fmt}")
+    if not 1 <= workers <= 16:
+        raise ValueError("Workers must be between 1 and 16.")
+    files = sorted(set(Path(p).resolve() for p in files), key=lambda p: str(p).casefold())
+    summary = ConversionSummary(found=len(files))
+    def cancelled() -> bool:
+        return bool(cancel_check and cancel_check())
+    if cancelled():
+        summary.cancelled = True
+        return summary
+    if not files:
+        return summary
+    initialize_heif()
+    jobs = iter(zip(files, plan_targets(files, output, fmt)))
 
-    def on_walk_error(error: OSError) -> None:
-        walk_errors.append(f"WARNING: Could not open {error.filename}: {error}")
-
-    files, summary.folders_scanned = find_heic_files(root, output_folder_name, on_walk_error)
-    total = len(files)
-    summary.found = total
-    log(f"Scanning root folder: {root}")
-    log(f"Folders scanned: {summary.folders_scanned}")
-    log(f"HEIC/HEIF files found: {summary.found}")
-    for error_message in walk_errors:
-        log(error_message)
-
-    for index, source in enumerate(files, start=1):
-        relative_source = source.relative_to(root)
-        target = source.parent / output_folder_name / f"{source.stem}.png"
-        if target.exists() and not overwrite:
-            summary.skipped += 1
-            if report is not None:
-                report.write(f"SKIPPED (PNG already exists): {relative_source}\n")
-            if progress is not None:
-                progress(index, total, relative_source, "skipped")
-            elif not quiet:
-                print(f"SKIPPED (PNG already exists): {relative_source}")
-            continue
+    def convert_job(source: Path, target: Path) -> tuple[str, str]:
+        if target.is_file() and not overwrite:
+            return "skipped", f"SKIPPED (already exists): {source}"
         try:
-            convert_one(source, target)
-            summary.converted += 1
-            if report is not None:
-                report.write(f"OK: {relative_source}\n")
-            if progress is not None:
-                progress(index, total, relative_source, "converted")
-            elif not quiet:
-                print(f"OK: {relative_source}")
+            convert_one(source, target, target_format=fmt)
+            return "converted", f"OK: {source} -> {target}"
         except Exception as error:
-            summary.failed += 1
-            if report is not None:
-                report.write(f"FAILED: {relative_source} -- {error}\n")
-            if progress is not None:
-                progress(index, total, relative_source, "failed")
-            elif not quiet:
-                print(f"FAILED: {relative_source} -- {error}")
+            return "failed", f"FAILED: {source} -- {error_message(error)}"
 
-    log(
-        "\nDone. "
-        f"Converted: {summary.converted}; skipped: {summary.skipped}; failed: {summary.failed}"
-    )
+    # Keep only `workers` futures outstanding so cancellation does not wait on a
+    # queue containing the entire library. Running saves finish atomically.
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = {}
+
+        def submit_next() -> None:
+            if cancelled():
+                return
+            job = next(jobs, None)
+            if job is not None:
+                pending[executor.submit(convert_job, *job)] = job
+
+        for _ in range(workers):
+            submit_next()
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                source, target = pending.pop(future)
+                status, detail = future.result()
+                setattr(summary, status, getattr(summary, status) + 1)
+                if status == "failed":
+                    summary.errors.append(detail)
+                elif target.parent not in summary.output_dirs:
+                    summary.output_dirs.append(target.parent)
+                if on_log:
+                    on_log(detail)
+                if progress:
+                    progress(summary.converted + summary.skipped + summary.failed,
+                             summary.found, source, status)
+            for _ in done:
+                submit_next()
+    summary.cancelled = cancelled() and summary.converted + summary.skipped + summary.failed < summary.found
     return summary
 
 
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Recursively convert HEIC/HEIF images to PNG beside their source folders."
-    )
-    parser.add_argument(
-        "--root", type=Path, default=application_root(),
-        help="Folder to scan. Default: folder containing this script or executable.",
-    )
-    parser.add_argument(
-        "--output-folder", default=DEFAULT_OUTPUT_FOLDER,
-        help=f"Output folder created beside source files. Default: {DEFAULT_OUTPUT_FOLDER}",
-    )
-    parser.add_argument("--overwrite", action="store_true", help="Replace existing PNG files.")
-    parser.add_argument("--no-report", action="store_true", help="Do not create a report file.")
-    parser.add_argument("--pause", action="store_true", help="Wait for Enter before closing.")
-    parser.add_argument("--quiet", action="store_true", help="Suppress conversion output and terminal progress.")
-    parser.add_argument("--no-progress", action="store_true", help="Disable per-file progress output.")
-    return parser.parse_args()
+def application_root() -> Path:
+    source = sys.executable if getattr(sys, "frozen", False) else __file__
+    return Path(source).resolve().parent
+
+
+def error_message(error: Exception) -> str:
+    text = str(error)
+    if text.startswith("Windows could not load the HEIC decoder."):
+        return text
+    if "Application Control" in text or "DLL load failed" in text:
+        return ("Windows could not load the HEIC decoder. "
+                "If the executable is blocked, use run_gui.bat from the source folder "
+                "with the installed Python environment. On a managed PC, ask your "
+                "administrator to approve the application. Details: " + text)
+    return text or type(error).__name__
+
+
+def initialize_heif() -> None:
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception as error:
+        raise RuntimeError(error_message(error)) from error
+
+
+def normalize_format(target_format: str) -> str:
+    fmt = target_format.lower().strip().lstrip(".")
+    if fmt not in SUPPORTED_FORMATS:
+        raise ValueError(f"Unsupported format '{target_format}'. Choose from {', '.join(SUPPORTED_FORMATS)}")
+    return fmt
+
+
+def validate_output_folder(name: str) -> str:
+    name = name.strip()
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}
+    if (not name or name in {".", ".."} or name.endswith((".", " "))
+            or any(c in name for c in '<>:"/\\|?*')
+            or any(ord(c) < 32 for c in name)
+            or name.split(".")[0].upper() in reserved):
+        raise ValueError("Output subfolder must be a single valid folder name, for example heic-png.")
+    return name
+
+
+def find_heic_files(root: Path, output_folder_name: str, on_error: Callable[[OSError], None],
+                    cancel_check: CancelCallback | None = None) -> tuple[list[Path], int]:
+    files: list[Path] = []
+    scanned = 0
+    excluded = {output_folder_name.casefold(), *(f"heic-{fmt}" for fmt in SUPPORTED_FORMATS)}
+    for directory, folders, names in os.walk(root, onerror=on_error):
+        if cancel_check and cancel_check():
+            break
+        folders[:] = sorted(n for n in folders if n.casefold() not in excluded)
+        scanned += 1
+        files.extend(Path(directory) / n for n in sorted(names)
+                     if Path(n).suffix.casefold() in HEIC_EXTENSIONS)
+    return files, scanned
+
+
+def prepare_image_for_format(image: Image.Image, target_format: str) -> tuple[Image.Image, str]:
+    fmt = normalize_format(target_format)
+    has_alpha = "A" in image.getbands() or "transparency" in image.info
+    # Formats that do not support alpha channel
+    if fmt in {"jpg", "jpeg", "bmp", "ppm"}:
+        if has_alpha:
+            with image.convert("RGBA") as rgba:
+                background = Image.new("RGB", rgba.size, "white")
+                with rgba.getchannel("A") as alpha:
+                    background.paste(rgba, mask=alpha)
+            return background, PILLOW_FORMATS[fmt]
+        return image.convert("RGB"), PILLOW_FORMATS[fmt]
+    # ICO format: max 256x256
+    if fmt == "ico":
+        img = image.convert("RGBA" if has_alpha else "RGB")
+        img.thumbnail((256, 256), Image.LANCZOS)
+        return img, PILLOW_FORMATS[fmt]
+    return image.convert("RGBA" if has_alpha else "RGB"), PILLOW_FORMATS[fmt]
+
+
+def convert_one(source: Path, target: Path, target_format: str = "png") -> None:
+    """Decode a photo and atomically replace its output only after a complete save."""
+    fmt = normalize_format(target_format)
+    initialize_heif()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with Image.open(source) as image:
+            corrected = ImageOps.exif_transpose(image)
+            prepared, pillow_format = prepare_image_for_format(corrected, fmt)
+            try:
+                kwargs = {"quality": 95} if pillow_format in {"JPEG", "WEBP"} else {}
+                if pillow_format == "ICO":
+                    kwargs["sizes"] = [prepared.size]
+                if image.info.get("icc_profile") and pillow_format in {"PNG", "JPEG", "WEBP", "TIFF"}:
+                    kwargs["icc_profile"] = image.info["icc_profile"]
+                with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".heic-", suffix=".tmp", delete=False) as temp:
+                    temp_path = Path(temp.name)
+                prepared.save(temp_path, pillow_format, **kwargs)
+                os.replace(temp_path, target)
+            finally:
+                prepared.close()
+                corrected.close()
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def convert_folder(root: Path, output_folder_name: str | None = None, overwrite: bool = False,
+                   report: TextIO | None = None, progress: ProgressCallback | None = None,
+                   quiet: bool = False, target_format: str = DEFAULT_FORMAT,
+                   cancel_check: CancelCallback | None = None,
+                   on_log: LogCallback | None = None, workers: int = 1) -> ConversionSummary:
+    fmt = normalize_format(target_format)
+    output = validate_output_folder(output_folder_name if output_folder_name is not None else f"heic-{fmt}")
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"Folder does not exist: {root}")
+
+    def log(message: str) -> None:
+        if not quiet:
+            print(message, flush=True)
+        if report is not None:
+            report.write(message + "\n")
+        if on_log is not None:
+            on_log(message)
+
+    # Announce scanning before touching a potentially large directory tree.
+    log(f"Scanning root folder: {root}")
+    scan = scan_sources([root], output, cancel_check)
+    log(f"Folders scanned: {scan.folders_scanned}")
+    log(f"Target format: {fmt.upper()}")
+    log(f"HEIC/HEIF files found: {len(scan.files)}")
+    for warning in scan.warnings:
+        log(f"WARNING: {warning}")
+
+    def detail(message: str) -> None:
+        # Relative paths keep CLI reports readable.
+        message = message.replace(str(root) + os.sep, "")
+        if report is not None:
+            report.write(message + "\n")
+        if on_log is not None:
+            on_log(message)
+        if progress is None and not quiet:
+            print(message, flush=True)
+
+    def notify(index: int, total: int, source: Path, status: str) -> None:
+        if progress:
+            progress(index, total, source.relative_to(root), status)
+
+    summary = convert_files(scan.files, output, overwrite, fmt, workers,
+                            notify, cancel_check, detail)
+    summary.folders_scanned = scan.folders_scanned
+    summary.warnings = scan.warnings
+    summary.cancelled = summary.cancelled or scan.cancelled
+    if summary.cancelled:
+        log("Conversion cancelled by user.")
+    elif not summary.found:
+        log("No HEIC/HEIF images found. Choose a folder containing .heic, .heif or .hif photos.")
+    log(f"\nDone. Converted: {summary.converted}; skipped: {summary.skipped}; failed: {summary.failed}")
+    return summary
+
+
+# Keep existing script and installed entry points compatible.
+def parse_arguments(argv: list[str] | None = None):
+    from cli import parse_arguments as parse
+    return parse(argv)
+
+
+def gui_main() -> int:
+    from gui import launch_gui
+    return launch_gui()
 
 
 def main() -> int:
-    """Run the CLI and return zero when all conversions succeed."""
-    arguments = parse_arguments()
-    root = arguments.root.expanduser().resolve()
-    if not root.is_dir():
-        print(f"ERROR: Folder does not exist: {root}", file=sys.stderr)
-        return 2
-
-    register_heif_opener()
-    report_path = root / DEFAULT_REPORT_FILE
-
-    progress_callback: ProgressCallback | None = None
-    if not arguments.quiet and not arguments.no_progress:
-        def cli_progress(index: int, total: int, source: Path, status: str) -> None:
-            percent = int((index / total) * 100) if total > 0 else 0
-            print(f"[{index}/{total}] {percent}% {status.upper()}: {source.as_posix()}")
-
-        progress_callback = cli_progress
-    elif arguments.no_progress and not arguments.quiet:
-        progress_callback = lambda _index, _total, _source, _status: None
-
-    if arguments.no_report:
-        summary = convert_folder(
-            root,
-            output_folder_name=arguments.output_folder,
-            overwrite=arguments.overwrite,
-            progress=progress_callback,
-            quiet=arguments.quiet,
-        )
-    else:
-        with report_path.open("w", encoding="utf-8") as report:
-            summary = convert_folder(
-                root,
-                output_folder_name=arguments.output_folder,
-                overwrite=arguments.overwrite,
-                report=report,
-                progress=progress_callback,
-                quiet=arguments.quiet,
-            )
-        if not arguments.quiet:
-            print(f"Report saved: {report_path}")
-
-    if arguments.pause or (getattr(sys, "frozen", False) and sys.platform == "win32"):
-        input("\nPress Enter to close...")
-    return 1 if summary.failed else 0
+    from cli import main as run
+    return run()
 
 
 if __name__ == "__main__":
