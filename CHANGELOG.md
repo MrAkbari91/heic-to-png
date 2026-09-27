@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.1
+
+- Keep Convert, Cancel and progress in a fixed footer, with scrollable content.
+- Discover photos in the background after folder selection and display a clear
+  count, destination and next action; discard stale scan results after edits.
+- Share discovery, collision-safe target planning and bounded parallel conversion
+  between GUI and CLI; separate CLI orchestration into its own module.
+- Restore initial folder selection, live result counters, cancellation and access
+  to every output folder. Preserve custom subfolder names when changing formats.
+- Fix tiny/non-square ICO output and delay decoder loading until conversion.
+- Validate CLI modes and worker counts; explain empty folders and continue
+  converting when the optional report cannot be opened.
+- Check CustomTkinter during setup, surface launcher errors, and align builds on
+  HEIC-Converter.exe. GUI logs are exported on demand with Save log.
+- Add real CLI, GUI responsiveness, cancellation and high-DPI layout regressions.
+
 ## 1.2.1
 
 - Catch blocked HEIC decoder initialization in the GUI and display actionable error details.

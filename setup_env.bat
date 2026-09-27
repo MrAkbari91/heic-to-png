@@ -10,9 +10,9 @@ goto :check
 python -m venv .venv
 if errorlevel 1 exit /b 1
 :check
-".venv\Scripts\python.exe" -c "import tkinter; from convert_heic_to_png import initialize_heif; initialize_heif()" >nul 2>nul
+".venv\Scripts\python.exe" -c "import tkinter, customtkinter; from convert_heic_to_png import initialize_heif; initialize_heif()" >nul 2>nul
 if not errorlevel 1 exit /b 0
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 exit /b 1
-".venv\Scripts\python.exe" -c "import tkinter; from convert_heic_to_png import initialize_heif; initialize_heif()"
+".venv\Scripts\python.exe" -c "import tkinter, customtkinter; from convert_heic_to_png import initialize_heif; initialize_heif()"
 exit /b %errorlevel%

@@ -7,7 +7,7 @@ if errorlevel 1 goto :error
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean HEIC-to-PNG.spec
 if errorlevel 1 goto :error
 echo.
-echo New executable: dist\HEIC-to-PNG.exe
+echo New executable: dist\HEIC-Converter.exe
 pause
 exit /b 0
 :error

@@ -20,6 +20,9 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e .[dev]
       - run: pytest
+        if: runner.os == 'Windows'
+      - run: xvfb-run -a pytest
+        if: runner.os == 'Linux'
 
   build:
     name: Build ${{ matrix.name }}
@@ -33,17 +36,17 @@ jobs:
             name: Windows
             artifact: heic-to-png-windows
             asset_name: heic-to-png-windows.exe
-            exe_name: HEIC-to-PNG.exe
+            exe_name: HEIC-Converter.exe
           - os: macos-latest
             name: macOS
             artifact: heic-to-png-macos
             asset_name: heic-to-png-macos
-            exe_name: HEIC-to-PNG
+            exe_name: HEIC-Converter
           - os: ubuntu-latest
             name: Linux
             artifact: heic-to-png-linux
             asset_name: heic-to-png-linux
-            exe_name: HEIC-to-PNG
+            exe_name: HEIC-Converter
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 call setup_env.bat
 if errorlevel 1 goto :error
-".venv\Scripts\python.exe" gui.py
+".venv\Scripts\python.exe" convert_heic_to_png.py --gui %*
 if errorlevel 1 goto :error
 exit /b 0
 :error

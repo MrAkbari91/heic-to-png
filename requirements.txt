@@ -1,3 +1,4 @@
 # Runtime dependencies. For development use: python -m pip install -e .[dev,build]
 Pillow>=10.0.0
 pillow-heif>=0.18.0
+customtkinter>=6.0.0
