@@ -3,7 +3,7 @@ from __future__ import annotations
 
 __author__ = "Dhruv Akbari"
 __email__ = "dhruvakbari303@gmail.com"
-__version__ = "2.0.1"
+__version__ = "2.1.0"
 
 import os
 import sys
@@ -28,6 +28,70 @@ PILLOW_FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "webp": "WEBP",
 DEFAULT_FORMAT = "png"
 DEFAULT_OUTPUT_FOLDER = "heic-png"
 DEFAULT_REPORT_FILE = "heic-png-report.txt"
+
+
+@dataclass(frozen=True)
+class EncodingOptions:
+    """Validated encoding settings, safe to share between parallel workers."""
+
+    quality: int = 95
+    png_compression: int = 6
+    webp_lossless: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.quality) is not int or not 1 <= self.quality <= 100:
+            raise ValueError("Quality must be an integer between 1 and 100.")
+        if type(self.png_compression) is not int or not 0 <= self.png_compression <= 9:
+            raise ValueError("PNG compression must be an integer between 0 and 9.")
+        if type(self.webp_lossless) is not bool:
+            raise ValueError("WebP lossless must be true or false.")
+
+    def save_kwargs(self, fmt: str) -> dict:
+        fmt = normalize_format(fmt)
+        if fmt in {"jpg", "jpeg"}:
+            return {"quality": self.quality}
+        if fmt == "webp":
+            settings = {"quality": self.quality, "lossless": self.webp_lossless}
+            if self.webp_lossless:
+                # Retain RGB values even underneath fully transparent pixels.
+                settings["exact"] = True
+            return settings
+        if fmt == "png":
+            return {"compress_level": self.png_compression}
+        return {}
+
+    def describe(self, fmt: str) -> str:
+        fmt = normalize_format(fmt)
+        if fmt in {"jpg", "jpeg"}:
+            return f"JPEG quality: {self.quality}/100"
+        if fmt == "webp":
+            if self.webp_lossless:
+                return f"WebP lossless; compression effort: {self.quality}/100"
+            return f"WebP lossy; quality: {self.quality}/100"
+        if fmt == "png":
+            return f"PNG lossless; compression level: {self.png_compression}/9"
+        return "Standard encoding (no adjustable quality/compression for this format)"
+
+
+ENCODING_PRESETS = {
+    "high-quality": EncodingOptions(quality=95, png_compression=6),
+    "balanced": EncodingOptions(quality=85, png_compression=6),
+    "small-file": EncodingOptions(quality=70, png_compression=9),
+}
+
+
+def resolve_encoding_options(preset: str = "high-quality", *, quality: int | None = None,
+                             png_compression: int | None = None,
+                             webp_lossless: bool = False) -> EncodingOptions:
+    """Apply explicit settings after the selected preset."""
+    if preset not in ENCODING_PRESETS:
+        raise ValueError(f"Unknown encoding preset: {preset}")
+    base = ENCODING_PRESETS[preset]
+    return EncodingOptions(
+        quality=base.quality if quality is None else quality,
+        png_compression=base.png_compression if png_compression is None else png_compression,
+        webp_lossless=webp_lossless,
+    )
 
 
 @dataclass
@@ -105,7 +169,8 @@ def convert_files(files: list[Path], output_folder_name: str | None = None,
                   overwrite: bool = False, target_format: str = DEFAULT_FORMAT,
                   workers: int = 1, progress: ProgressCallback | None = None,
                   cancel_check: CancelCallback | None = None,
-                  on_log: LogCallback | None = None) -> ConversionSummary:
+                  on_log: LogCallback | None = None, *,
+                  encoding: EncodingOptions | None = None) -> ConversionSummary:
     """Shared CLI/GUI batch engine. Callbacks run on the coordinating thread."""
     fmt = normalize_format(target_format)
     output = validate_output_folder(output_folder_name if output_folder_name is not None else f"heic-{fmt}")
@@ -127,7 +192,7 @@ def convert_files(files: list[Path], output_folder_name: str | None = None,
         if target.is_file() and not overwrite:
             return "skipped", f"SKIPPED (already exists): {source}"
         try:
-            convert_one(source, target, target_format=fmt)
+            convert_one(source, target, target_format=fmt, encoding=encoding)
             return "converted", f"OK: {source} -> {target}"
         except Exception as error:
             return "failed", f"FAILED: {source} -- {error_message(error)}"
@@ -246,9 +311,11 @@ def prepare_image_for_format(image: Image.Image, target_format: str) -> tuple[Im
     return image.convert("RGBA" if has_alpha else "RGB"), PILLOW_FORMATS[fmt]
 
 
-def convert_one(source: Path, target: Path, target_format: str = "png") -> None:
+def convert_one(source: Path, target: Path, target_format: str = "png", *,
+                encoding: EncodingOptions | None = None) -> None:
     """Decode a photo and atomically replace its output only after a complete save."""
     fmt = normalize_format(target_format)
+    options = encoding if encoding is not None else EncodingOptions()
     initialize_heif()
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
@@ -257,7 +324,7 @@ def convert_one(source: Path, target: Path, target_format: str = "png") -> None:
             corrected = ImageOps.exif_transpose(image)
             prepared, pillow_format = prepare_image_for_format(corrected, fmt)
             try:
-                kwargs = {"quality": 95} if pillow_format in {"JPEG", "WEBP"} else {}
+                kwargs = options.save_kwargs(fmt)
                 if pillow_format == "ICO":
                     kwargs["sizes"] = [prepared.size]
                 if image.info.get("icc_profile") and pillow_format in {"PNG", "JPEG", "WEBP", "TIFF"}:
@@ -278,7 +345,8 @@ def convert_folder(root: Path, output_folder_name: str | None = None, overwrite:
                    report: TextIO | None = None, progress: ProgressCallback | None = None,
                    quiet: bool = False, target_format: str = DEFAULT_FORMAT,
                    cancel_check: CancelCallback | None = None,
-                   on_log: LogCallback | None = None, workers: int = 1) -> ConversionSummary:
+                   on_log: LogCallback | None = None, workers: int = 1, *,
+                   encoding: EncodingOptions | None = None) -> ConversionSummary:
     fmt = normalize_format(target_format)
     output = validate_output_folder(output_folder_name if output_folder_name is not None else f"heic-{fmt}")
     root = Path(root).expanduser().resolve()
@@ -298,6 +366,7 @@ def convert_folder(root: Path, output_folder_name: str | None = None, overwrite:
     scan = scan_sources([root], output, cancel_check)
     log(f"Folders scanned: {scan.folders_scanned}")
     log(f"Target format: {fmt.upper()}")
+    log((encoding if encoding is not None else EncodingOptions()).describe(fmt))
     log(f"HEIC/HEIF files found: {len(scan.files)}")
     for warning in scan.warnings:
         log(f"WARNING: {warning}")
@@ -317,7 +386,7 @@ def convert_folder(root: Path, output_folder_name: str | None = None, overwrite:
             progress(index, total, source.relative_to(root), status)
 
     summary = convert_files(scan.files, output, overwrite, fmt, workers,
-                            notify, cancel_check, detail)
+                            notify, cancel_check, detail, encoding=encoding)
     summary.folders_scanned = scan.folders_scanned
     summary.warnings = scan.warnings
     summary.cancelled = summary.cancelled or scan.cancelled

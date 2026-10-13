@@ -319,6 +319,8 @@ def test_gui_cancel_recovers_controls_and_preserves_completed_outputs(app, heif_
     assert app.stat_converted.cget("text") == "1"
     assert app.start_btn.cget("state") == "normal"
     assert app.open_btn.cget("state") == "normal"
+    assert app.preset_menu.cget("state") == "normal"
+    assert app.png_slider.cget("state") == "normal"
 
 
 @pytest.mark.parametrize("scaling", [1.0, 1.5])
@@ -345,3 +347,77 @@ def test_primary_action_stays_visible_at_minimum_window_size(app, heif_photo, sc
     finally:
         gui.ctk.set_widget_scaling(1)
         gui.ctk.set_window_scaling(1)
+
+
+def test_gui_encoding_presets_custom_controls_and_format_visibility(app):
+    app.preset_menu.set("Small File")
+    app._on_preset_changed("Small File")
+    assert app.quality_var.get() == 70
+    assert app.png_compression_var.get() == 9
+    assert app.png_row.winfo_manager() == "grid"
+    assert not app.quality_row.winfo_manager()
+    app._on_png_compression_changed(0)
+    assert app.preset_var.get() == "Custom"
+    assert app.png_compression_var.get() == 0
+
+    app.format_var.set("WEBP")
+    app._on_format_changed()
+    assert not app.png_row.winfo_manager()
+    assert app.quality_row.winfo_manager() == "grid"
+    assert app.lossless_row.winfo_manager() == "grid"
+    app.lossless_switch.toggle()
+    assert app.webp_lossless_var.get()
+    assert "effort" in app.quality_label.cget("text")
+    app._on_quality_changed(42)
+    assert app.quality_var.get() == 42
+    app.preset_menu.set("Balanced")
+    app._on_preset_changed("Balanced")
+    assert app.quality_var.get() == 85
+    assert not app.webp_lossless_var.get()
+    assert "Image quality" in app.quality_label.cget("text")
+
+    app.format_var.set("BMP")
+    app._on_format_changed()
+    assert app.preset_menu.cget("state") == "disabled"
+    assert not app.quality_row.winfo_manager()
+    assert not app.lossless_row.winfo_manager()
+
+
+@pytest.mark.parametrize("fmt,quality,compression,lossless", [
+    ("JPG", 40, 6, False), ("PNG", 95, 0, False), ("WEBP", 85, 6, True),
+])
+def test_gui_selected_encoding_reaches_output_and_controls_recover(app, heif_photo, fmt, quality, compression, lossless):
+    app.format_var.set(fmt)
+    app._on_format_changed()
+    app.quality_var.set(quality)
+    app.png_compression_var.set(compression)
+    app.webp_lossless_var.set(lossless)
+    app._on_encoding_changed()
+    ready(app)
+    app.start_btn.invoke()
+    for widget in (app.preset_menu, app.quality_slider, app.png_slider, app.lossless_switch):
+        assert widget.cget("state") == "disabled"
+    # Later variable edits must not change the settings already sent to workers.
+    app.quality_var.set(99)
+    app.png_compression_var.set(9)
+    app.webp_lossless_var.set(False)
+    drain_worker(app)
+    options = converter.EncodingOptions(quality=quality, png_compression=compression, webp_lossless=lossless)
+    expected = heif_photo.parent / f"expected.{fmt.lower()}"
+    converter.convert_one(heif_photo, expected, fmt, encoding=options)
+    output = heif_photo.parent / f"heic-{fmt.lower()}" / f"photo.{fmt.lower()}"
+    assert output.read_bytes() == expected.read_bytes()
+    assert options.describe(fmt) in app.log_text.get("1.0", "end")
+    assert app.preset_menu.cget("state") == "normal"
+    assert app.quality_slider.cget("state") == "normal"
+
+
+def test_gui_encoding_controls_recover_after_decoder_failure(app, heif_photo, monkeypatch):
+    def blocked():
+        raise RuntimeError("Decoder unavailable")
+    monkeypatch.setattr(converter, "initialize_heif", blocked)
+    ready(app)
+    app.start_btn.invoke()
+    drain_worker(app)
+    assert app.png_slider.cget("state") == "normal"
+    assert app.preset_menu.cget("state") == "normal"

@@ -48,6 +48,7 @@ COLOR_CANCEL_HOVER = "#d65d45"
 
 DEFAULT_WORKERS = 4
 MAX_WORKERS = 16
+PRESET_LABELS = {"High Quality": "high-quality", "Balanced": "balanced", "Small File": "small-file"}
 
 
 # ──────────────────────────── Utility ────────────────────────────────────────
@@ -104,6 +105,7 @@ class HEICConverterGUI:
         initial_output: str | None = None,
         initial_overwrite: bool = False,
         initial_workers: int = DEFAULT_WORKERS,
+        initial_encoding: converter.EncodingOptions | None = None,
     ) -> None:
         self.root = root_window
         self.root.title(f"HEIC Converter {converter.__version__}")
@@ -137,6 +139,13 @@ class HEICConverterGUI:
         self.output_folder_var = tk.StringVar(value=initial_output or f"heic-{initial_format.lower()}")
         self.overwrite_var = tk.BooleanVar(value=initial_overwrite)
         self.workers_var = tk.IntVar(value=initial_workers)
+        encoding = initial_encoding if initial_encoding is not None else converter.EncodingOptions()
+        self.quality_var = tk.IntVar(value=encoding.quality)
+        self.png_compression_var = tk.IntVar(value=encoding.png_compression)
+        self.webp_lossless_var = tk.BooleanVar(value=encoding.webp_lossless)
+        preset = next((label for label, key in PRESET_LABELS.items()
+                       if converter.ENCODING_PRESETS[key] == encoding), "Custom")
+        self.preset_var = tk.StringVar(value=preset)
 
         self.is_converting = False
         self.is_cancelled = False
@@ -192,6 +201,7 @@ class HEICConverterGUI:
         mid_row.columnconfigure(1, weight=2)
         self._build_settings_card(mid_row)
         self._build_stats_card(mid_row)
+        self._build_encoding_card(container)
         self._build_log_section(container)
 
     def _build_header(self, parent) -> None:
@@ -377,6 +387,106 @@ class HEICConverterGUI:
             button_hover_color=COLOR_TEXT_DIM,
         )
         self.overwrite_switch.pack(side="left")
+
+    def _build_encoding_card(self, parent) -> None:
+        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12,
+                            border_width=1, border_color=COLOR_BORDER)
+        card.pack(fill="x", pady=(0, 12))
+        card.columnconfigure(0, weight=1)
+        ctk.CTkLabel(card, text="Quality & compression", text_color=COLOR_TEXT,
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(
+                         row=0, column=0, sticky="w", padx=16, pady=(12, 6))
+
+        preset_row = ctk.CTkFrame(card, fg_color="transparent")
+        preset_row.grid(row=1, column=0, sticky="ew", padx=16, pady=4)
+        ctk.CTkLabel(preset_row, text="Preset", text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 12))
+        self.preset_menu = ctk.CTkOptionMenu(
+            preset_row, variable=self.preset_var, values=[*PRESET_LABELS, "Custom"],
+            command=self._on_preset_changed, width=150,
+            fg_color=COLOR_LOG_BG, button_color=COLOR_ACCENT_DIM)
+        self.preset_menu.pack(side="left")
+
+        self.quality_row = ctk.CTkFrame(card, fg_color="transparent")
+        self.quality_row.grid(row=2, column=0, sticky="ew", padx=16, pady=6)
+        self.quality_label = ctk.CTkLabel(self.quality_row, width=180, anchor="w", text_color=COLOR_TEXT_DIM)
+        self.quality_label.pack(side="left")
+        self.quality_value = ctk.CTkLabel(self.quality_row, width=55, textvariable=self.quality_var)
+        self.quality_value.pack(side="right")
+        self.quality_slider = ctk.CTkSlider(
+            self.quality_row, from_=1, to=100, number_of_steps=99,
+            variable=self.quality_var, command=self._on_quality_changed,
+            progress_color=COLOR_ACCENT)
+        self.quality_slider.pack(side="left", fill="x", expand=True, padx=10)
+
+        self.lossless_row = ctk.CTkFrame(card, fg_color="transparent")
+        self.lossless_row.grid(row=3, column=0, sticky="ew", padx=16, pady=6)
+        self.lossless_switch = ctk.CTkSwitch(
+            self.lossless_row, text="Lossless WebP", variable=self.webp_lossless_var,
+            command=self._on_encoding_changed, progress_color=COLOR_ACCENT)
+        self.lossless_switch.pack(side="left")
+
+        self.png_row = ctk.CTkFrame(card, fg_color="transparent")
+        self.png_row.grid(row=4, column=0, sticky="ew", padx=16, pady=6)
+        ctk.CTkLabel(self.png_row, text="PNG compression (0-9)", width=180,
+                     anchor="w", text_color=COLOR_TEXT_DIM).pack(side="left")
+        ctk.CTkLabel(self.png_row, width=55, textvariable=self.png_compression_var).pack(side="right")
+        self.png_slider = ctk.CTkSlider(
+            self.png_row, from_=0, to=9, number_of_steps=9,
+            variable=self.png_compression_var, command=self._on_png_compression_changed,
+            progress_color=COLOR_ACCENT)
+        self.png_slider.pack(side="left", fill="x", expand=True, padx=10)
+
+        self.encoding_hint = ctk.CTkLabel(card, text="", justify="left", anchor="w",
+                                         wraplength=680, text_color=COLOR_TEXT_DIM)
+        self.encoding_hint.grid(row=5, column=0, sticky="ew", padx=16, pady=(4, 6))
+        ctk.CTkLabel(card, text="To change existing outputs, enable Overwrite existing or use a new subfolder.",
+                     justify="left", anchor="w", wraplength=680, text_color=COLOR_TEXT_DIM,
+                     font=ctk.CTkFont(size=11)).grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 12))
+        self._refresh_encoding_controls()
+
+    def _refresh_encoding_controls(self) -> None:
+        fmt = self.format_var.get().lower()
+        state = "disabled" if self.is_converting else "normal"
+        self.preset_menu.configure(state=state if fmt in {"jpg", "jpeg", "webp", "png"} else "disabled")
+        for row, enabled in ((self.quality_row, fmt in {"jpg", "jpeg", "webp"}),
+                             (self.lossless_row, fmt == "webp"), (self.png_row, fmt == "png")):
+            if enabled:
+                row.grid()
+            else:
+                row.grid_remove()
+        for control in (self.quality_slider, self.lossless_switch, self.png_slider):
+            control.configure(state=state)
+        lossless = fmt == "webp" and self.webp_lossless_var.get()
+        self.quality_label.configure(text="Compression effort (1-100)" if lossless else "Image quality (1-100)")
+        if fmt == "png":
+            hint = "PNG always keeps decoded pixels unchanged. 0 is fastest; 9 uses more compression and can be slower."
+        elif lossless:
+            hint = "Keeps decoded pixels unchanged. Higher effort spends more time compressing; it does not change image quality."
+        elif fmt in {"jpg", "jpeg", "webp"}:
+            hint = "Higher quality keeps more detail and usually makes larger files. Smaller files may lose detail."
+        else:
+            hint = "This format uses standard encoding. Quality and compression controls apply to JPG, WebP and PNG."
+        self.encoding_hint.configure(text=hint)
+
+    def _on_preset_changed(self, label: str) -> None:
+        if label in PRESET_LABELS:
+            options = converter.ENCODING_PRESETS[PRESET_LABELS[label]]
+            self.quality_var.set(options.quality)
+            self.png_compression_var.set(options.png_compression)
+            self.webp_lossless_var.set(options.webp_lossless)
+        self._refresh_encoding_controls()
+
+    def _on_encoding_changed(self) -> None:
+        self.preset_var.set("Custom")
+        self._refresh_encoding_controls()
+
+    def _on_quality_changed(self, value: float) -> None:
+        self.quality_var.set(round(value))
+        self._on_encoding_changed()
+
+    def _on_png_compression_changed(self, value: float) -> None:
+        self.png_compression_var.set(round(value))
+        self._on_encoding_changed()
 
     def _build_stats_card(self, parent) -> None:
         card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
@@ -733,6 +843,7 @@ class HEICConverterGUI:
     # ─────────────────────────── Format ──────────────────────────────────────
 
     def _on_format_changed(self, _value=None) -> None:
+        self._refresh_encoding_controls()
         fmt = self.format_var.get().lower()
         current = self.output_folder_var.get()
         if current in {f"heic-{f}" for f in converter.SUPPORTED_FORMATS}:
@@ -758,6 +869,7 @@ class HEICConverterGUI:
         self.overwrite_switch.configure(state=state)
         self.start_btn.configure(state="disabled" if running or not self.scan_result.files else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
+        self._refresh_encoding_controls()
 
     def _start_conversion(self) -> None:
         if self.close_requested or self.is_converting or self.is_scanning or self.scan_after is not None:
@@ -773,6 +885,10 @@ class HEICConverterGUI:
             target_fmt = converter.normalize_format(self.format_var.get())
             output_folder = converter.validate_output_folder(
                 self.output_folder_var.get().strip() or f"heic-{target_fmt}"
+            )
+            encoding = converter.EncodingOptions(
+                quality=self.quality_var.get(), png_compression=self.png_compression_var.get(),
+                webp_lossless=self.webp_lossless_var.get(),
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Invalid Settings", str(error), parent=self.root)
@@ -801,13 +917,14 @@ class HEICConverterGUI:
 
         self.worker = threading.Thread(
             target=self._run_conversion_worker,
-            args=(target_fmt, output_folder, overwrite, num_workers),
+            args=(target_fmt, output_folder, overwrite, num_workers, encoding),
             daemon=True,
         )
         self.worker.start()
 
     def _run_conversion_worker(self, target_fmt: str, output_folder: str,
-                                overwrite: bool, num_workers: int) -> None:
+                                overwrite: bool, num_workers: int,
+                                encoding: converter.EncodingOptions) -> None:
         """Workers only send messages; all Tk reads and writes stay on the UI thread."""
         def log(text):
             tag = "failed" if text.startswith("FAILED") else "skipped" if text.startswith("SKIPPED") else "info"
@@ -818,11 +935,12 @@ class HEICConverterGUI:
                                 "source": str(source), "status": status})
         try:
             log(f"Converting {len(self.active_files)} photos to {target_fmt.upper()} with {num_workers} parallel jobs.")
+            log(encoding.describe(target_fmt))
             for warning in self.active_warnings:
                 log(f"WARNING: {warning}")
             summary = converter.convert_files(
                 list(self.active_files), output_folder, overwrite, target_fmt,
-                num_workers, progress, lambda: self.is_cancelled, log,
+                num_workers, progress, lambda: self.is_cancelled, log, encoding=encoding,
             )
             self.msg_queue.put({"type": "complete", "cancelled": summary.cancelled,
                                 "converted": summary.converted, "skipped": summary.skipped,

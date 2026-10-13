@@ -9,6 +9,7 @@ from pathlib import Path
 from convert_heic_to_png import (
     DEFAULT_FORMAT, SUPPORTED_FORMATS, ProgressCallback, application_root,
     convert_folder, error_message, validate_output_folder,
+    ENCODING_PRESETS, resolve_encoding_options,
 )
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,7 +62,29 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--cli", action="store_true", help="Force command-line mode without GUI."
     )
     parser.add_argument("--workers", type=int, choices=range(1, 17), default=4, help="Parallel conversions (1-16). Default: 4.")
-    return parser.parse_args(argv)
+    parser.add_argument("--preset", choices=ENCODING_PRESETS, default="high-quality",
+                        help="Encoding preset. Default: high-quality. Explicit controls override it.")
+    parser.add_argument("--quality", type=int, metavar="1..100",
+                        help="JPEG/WebP quality; in lossless WebP this controls compression effort.")
+    parser.add_argument("--png-compression", type=int, metavar="0..9",
+                        help="PNG compression: 0 fastest, 9 most compression; always lossless.")
+    parser.add_argument("--webp-lossless", action="store_true",
+                        help="Save WebP without further pixel loss; quality controls compression effort.")
+    arguments = parser.parse_args(argv)
+    if arguments.quality is not None and arguments.format not in {"jpg", "jpeg", "webp"}:
+        parser.error("--quality requires --format jpg, jpeg or webp")
+    if arguments.png_compression is not None and arguments.format != "png":
+        parser.error("--png-compression requires --format png")
+    if arguments.webp_lossless and arguments.format != "webp":
+        parser.error("--webp-lossless requires --format webp")
+    try:
+        arguments.encoding = resolve_encoding_options(
+            arguments.preset, quality=arguments.quality,
+            png_compression=arguments.png_compression, webp_lossless=arguments.webp_lossless,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    return arguments
 
 
 def _main() -> int:
@@ -85,7 +108,7 @@ def _main() -> int:
             return launch_gui(
                 initial_root=arguments.root, initial_format=arguments.format,
                 initial_output=arguments.output_folder, initial_overwrite=arguments.overwrite,
-                initial_workers=arguments.workers
+                initial_workers=arguments.workers, initial_encoding=arguments.encoding
             )
         except Exception as gui_err:
             if arguments.gui:
@@ -137,7 +160,7 @@ def _main() -> int:
             progress=progress_callback,
             quiet=arguments.quiet,
             target_format=fmt, workers=arguments.workers,
-            report=report,
+            report=report, encoding=arguments.encoding,
         )
     finally:
         if report is not None:

@@ -6,14 +6,14 @@ Original photos stay unchanged. Each source folder gets its own output subfolder
 
 ## Windows: open the app
 
-Open **`dist/HEIC-Converter.exe`** (version 2.0.1), or double-click **`run_gui.bat`**
+Open **`dist/HEIC-Converter.exe`** (version 2.1.0), or double-click **`run_gui.bat`**
 to run the current source. Rebuild the executable after changing source code;
 older copies of the app do not update automatically.
 
 1. Click **Choose folder** or **Add files**. Subfolders are included automatically.
 2. Wait for the background scan. The app shows the number of photos and where
    results will be saved. An empty or unreadable folder gets an explanation.
-3. Choose an output format, then click **Convert N photos to FORMAT** in the
+3. Choose an output format and quality/compression settings, then click **Convert N photos to FORMAT** in the
    fixed bottom bar. You can also press **Ctrl+Enter** when the scan is ready.
 4. Watch the live progress and results. Click **Open results** when finished.
    If outputs are spread across folders, choose the folder from the results list.
@@ -26,6 +26,8 @@ another scan. Overlapping selections are deduplicated.
   `Photos/Holiday/heic-png/photo.png`. The subfolder setting accepts a folder
   name, not an absolute destination path.
 - Existing outputs are skipped unless **Overwrite existing** is enabled.
+  Changing quality or compression does not automatically replace existing files;
+  enable overwrite or choose a new output subfolder to compare settings.
 - **Parallel jobs** controls how many photos convert at once (default 4).
   Use fewer jobs for large photos or limited memory.
 - **Cancel** stops scheduling new work and lets active photos finish saving.
@@ -68,6 +70,10 @@ python convert_heic_to_png.py --cli --root "path/to/photos" --format webp --no-r
 python convert_heic_to_png.py --cli --root "path/to/photos" --output-folder converted
 python convert_heic_to_png.py --cli --root "path/to/photos" --format png --overwrite
 python convert_heic_to_png.py --gui --root "path/to/photos" --format png
+python convert_heic_to_png.py --cli --root "path/to/photos" --format jpg --preset balanced
+python convert_heic_to_png.py --cli --root "path/to/photos" --format jpg --preset small-file --quality 90
+python convert_heic_to_png.py --cli --root "path/to/photos" --format webp --webp-lossless
+python convert_heic_to_png.py --cli --root "path/to/photos" --format png --png-compression 9
 ```
 
 | Option | Behavior |
@@ -76,6 +82,10 @@ python convert_heic_to_png.py --gui --root "path/to/photos" --format png
 | `--format FORMAT`, `-f FORMAT` | Output format; default PNG |
 | `--output-folder NAME` | Subfolder created beside each source; default `heic-<format>` |
 | `--workers 1..16` | Parallel conversions; default 4 |
+| `--preset NAME` | `high-quality` (default), `balanced`, or `small-file` |
+| `--quality 1..100` | JPG/JPEG/WebP quality; lossless WebP compression effort |
+| `--webp-lossless` | Lossless WebP encoding; requires `--format webp` |
+| `--png-compression 0..9` | PNG compression level; default 6; requires PNG output |
 | `--overwrite` | Replace existing output files |
 | `--no-report` | Disable the CLI report |
 | `--quiet` | Suppress normal terminal output |
@@ -93,12 +103,44 @@ zero with a message explaining that no supported photos were found.
 - Converts the primary image of a HEIF container and applies camera orientation.
 - Preserves ICC color profiles for PNG/JPEG/WebP/TIFF when available.
 - Decodes to 8-bit RGB/RGBA; this is not an HDR archival converter.
-- JPEG/WebP use quality 95. JPEG, BMP and PPM flatten transparency onto white.
+- JPEG/WebP default to quality 95. JPEG, BMP and PPM flatten transparency onto white.
 - PNG, WebP and TIFF preserve alpha. GIF has a limited palette/transparency.
 - ICO fits the image within 256 x 256 without enlarging small images.
 - Videos and unsupported input formats are ignored during folder discovery.
   Corrupt HEIF photos are reported individually without aborting the batch.
 - Metadata preservation varies by output format; retain originals as your archive.
+
+## Quality and compression
+
+The GUI shows controls for the selected format. Move a slider or toggle lossless
+WebP to switch the preset label to **Custom**. Settings are fixed for the running
+batch; controls become available again when the batch finishes or is cancelled.
+
+| Preset | JPG / lossy WebP quality | PNG compression |
+| --- | --- | --- |
+| High Quality | 95 | 6 |
+| Balanced | 85 | 6 |
+| Small File | 70 | 9 |
+
+All presets use lossy WebP; choosing a preset resets the lossless switch.
+Enable **Lossless WebP** after choosing a preset if needed. PNG is always
+lossless: presets only change its compression effort, never pixel quality.
+Other output formats continue to use their standard encoding.
+
+- JPG/WebP quality is 1-100. Lower values usually make smaller files with less
+  detail. JPEG values above 95 can increase size substantially for little gain;
+  JPEG quality 100 is still lossy.
+- PNG compression is 0-9: 0 disables compression, 1 is fastest compression, and
+  9 uses the most compression effort. Actual size and speed depend on the image.
+- Lossless WebP preserves the decoded pixels. Its slider becomes **Compression
+  effort**: higher values spend more time trying to reduce file size, without
+  changing image quality. This does not restore information already lost in the
+  source HEIC or enable HDR preservation.
+- CLI explicit controls override presets regardless of argument order.
+  Format-specific flags used with the wrong output format are rejected before
+  creating reports or output files. `--gui` accepts the same initial settings.
+- Effective encoding settings appear in the GUI activity log and CLI report.
+  Presets do not resize photos or guarantee a particular file size.
 
 ## Development and packaging
 

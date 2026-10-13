@@ -52,7 +52,7 @@ def test_convert_folder_with_jpg_creates_heic_jpg_folder(tmp_path: Path, monkeyp
     source = tmp_path / "sample.heic"
     source.write_bytes(b"dummy_data")
 
-    def fake_convert(src: Path, tgt: Path, target_format: str = "png") -> None:
+    def fake_convert(src: Path, tgt: Path, target_format: str = "png", **kwargs) -> None:
         tgt.parent.mkdir(parents=True, exist_ok=True)
         tgt.write_text(f"converted to {target_format}")
 

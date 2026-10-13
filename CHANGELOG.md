@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0
+
+- Add JPG/WebP quality sliders, lossless WebP with compression-effort control,
+  and lossless PNG compression levels in the GUI and CLI.
+- Add High Quality, Balanced and Small File encoding presets with explicit
+  control overrides, format-aware GUI controls, validation and settings in logs.
+- Keep existing default encoding and skip/overwrite behavior. Add real-file,
+  CLI and GUI tests for encoding quality, lossless pixels and batch settings.
+
 ## 2.0.1
 
 - Keep Convert, Cancel and progress in a fixed footer, with scrollable content.

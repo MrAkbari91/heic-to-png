@@ -26,7 +26,7 @@ def test_convert_folder_reports_progress_and_summary(tmp_path: Path, monkeypatch
     source_a.write_bytes(b"test")
     source_b.write_bytes(b"test")
 
-    def fake_convert(source: Path, target: Path, target_format: str = "png") -> None:
+    def fake_convert(source: Path, target: Path, target_format: str = "png", **kwargs) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
 
@@ -57,7 +57,7 @@ def test_convert_folder_reports_skipped_files(tmp_path: Path, monkeypatch) -> No
 
     called = False
 
-    def fake_convert(_source: Path, _target: Path, target_format: str = "png") -> None:
+    def fake_convert(_source: Path, _target: Path, target_format: str = "png", **kwargs) -> None:
         nonlocal called
         called = True
 
@@ -80,7 +80,7 @@ def test_convert_folder_reports_failed_files(tmp_path: Path, monkeypatch) -> Non
     source = tmp_path / "corrupt.heic"
     source.write_bytes(b"bad data")
 
-    def fake_convert_fail(_source: Path, _target: Path, target_format: str = "png") -> None:
+    def fake_convert_fail(_source: Path, _target: Path, target_format: str = "png", **kwargs) -> None:
         raise ValueError("corrupt image data")
 
     monkeypatch.setattr("convert_heic_to_png.convert_one", fake_convert_fail)
